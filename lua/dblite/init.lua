@@ -1,0 +1,267 @@
+local config = require("dblite.config")
+
+local M = {}
+
+local split_cmds = {
+  vertical = "vnew",
+  horizontal = "new",
+  tab = "tabnew",
+}
+
+local ns = vim.api.nvim_create_namespace("dblite")
+vim.api.nvim_set_hl(0, "DbliteStatusPage", { link = "Title", default = true })
+
+local state = {
+  result_bufnr = nil,
+  current_job = nil,
+  rows = {},
+  columns = {},
+  widths = {},
+  page = 1,
+}
+
+local function merge_into(target, source)
+  for k, v in pairs(source) do
+    if type(v) == "table" and type(target[k]) == "table" then
+      merge_into(target[k], v)
+    else
+      target[k] = v
+    end
+  end
+end
+
+function M.setup(opts)
+  if opts then merge_into(config, opts) end
+end
+
+local function cell(value, width)
+  local s = value == vim.NIL and "" or tostring(value)
+  local max = config.max_col_width or 0
+  if max > 0 and #s > max then
+    s = s:sub(1, max - 1) .. "…"
+  end
+  if #s < width then
+    s = s .. string.rep(" ", width - #s)
+  end
+  return s
+end
+
+local function compute_widths(rows, columns)
+  local widths = {}
+  local max = config.max_col_width or 0
+  for _, col in ipairs(columns) do
+    widths[col] = #col
+  end
+  for _, row in ipairs(rows) do
+    for _, col in ipairs(columns) do
+      local v = row[col]
+      local s = v == vim.NIL and "" or tostring(v)
+      if max > 0 and #s > max then s = s:sub(1, max) end
+      if #s > widths[col] then widths[col] = #s end
+    end
+  end
+  return widths
+end
+
+local function render_page()
+  local bufnr = state.result_bufnr
+  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
+
+  local total = #state.rows
+  local page_size = config.page_size or 100
+  local total_pages = math.max(1, math.ceil(total / page_size))
+  if state.page > total_pages then state.page = total_pages end
+  if state.page < 1 then state.page = 1 end
+
+  local start_row = (state.page - 1) * page_size + 1
+  local end_row = math.min(start_row + page_size - 1, total)
+
+  local lines = {}
+  local status = total == 0
+    and "(no rows)"
+    or string.format("(%d/%d)", state.page, total_pages)
+  table.insert(lines, status)
+  table.insert(lines, "")
+
+  if total == 0 then
+    vim.bo[bufnr].modifiable = true
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+    vim.bo[bufnr].modifiable = false
+    vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+    vim.api.nvim_buf_set_extmark(bufnr, ns, 0, 0, {
+      end_col = #status,
+      hl_group = "DbliteStatusPage",
+    })
+    return
+  end
+
+  local header_parts = {}
+  local sep_parts = {}
+  for _, col in ipairs(state.columns) do
+    table.insert(header_parts, cell(col, state.widths[col]))
+    table.insert(sep_parts, string.rep("-", state.widths[col]))
+  end
+  table.insert(lines, table.concat(header_parts, " | "))
+  table.insert(lines, table.concat(sep_parts, "-+-"))
+
+  for i = start_row, end_row do
+    local row = state.rows[i]
+    local parts = {}
+    for _, col in ipairs(state.columns) do
+      table.insert(parts, cell(row[col], state.widths[col]))
+    end
+    table.insert(lines, table.concat(parts, " | "))
+  end
+
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.bo[bufnr].modifiable = false
+
+  vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+  vim.api.nvim_buf_set_extmark(bufnr, ns, 0, 0, {
+    end_col = #status,
+    hl_group = "DbliteStatusPage",
+  })
+end
+
+local function set_status(text)
+  local bufnr = state.result_bufnr
+  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { text })
+  vim.bo[bufnr].modifiable = false
+end
+
+local function configure_result_buffer(bufnr)
+  vim.bo[bufnr].buftype = "nofile"
+  vim.bo[bufnr].bufhidden = "wipe"
+  vim.bo[bufnr].swapfile = false
+  vim.bo[bufnr].filetype = config.filetype or ""
+
+  local function map(lhs, fn, desc)
+    if lhs and lhs ~= "" then
+      vim.keymap.set("n", lhs, fn, { buffer = bufnr, silent = true, desc = desc })
+    end
+  end
+
+  local km = (config.keymaps and config.keymaps.dbout) or {}
+
+  map(km.next, function()
+    state.page = state.page + 1
+    render_page()
+  end, "dblite: next page")
+
+  map(km.prev, function()
+    state.page = state.page - 1
+    render_page()
+  end, "dblite: prev page")
+
+  map(km.cancel, function()
+    if state.current_job then
+      pcall(function() state.current_job:kill(15) end)
+      set_status("-- dblite: cancelling...")
+    end
+  end, "dblite: cancel query")
+
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    buffer = bufnr,
+    once = true,
+    callback = function()
+      if state.current_job then
+        pcall(function() state.current_job:kill(15) end)
+      end
+      state.result_bufnr = nil
+    end,
+  })
+end
+
+local function ensure_result_buffer()
+  if state.result_bufnr and vim.api.nvim_buf_is_valid(state.result_bufnr) then
+    local bufnr = state.result_bufnr
+    local wins = vim.fn.win_findbuf(bufnr)
+    if #wins == 0 then
+      vim.cmd(split_cmds[config.split_dir] or split_cmds.vertical)
+      vim.api.nvim_win_set_buf(0, bufnr)
+      local sz = config.split_size or {}
+      if config.split_dir == "vertical" and sz.width and sz.width > 0 then
+        vim.api.nvim_win_set_width(0, sz.width)
+      elseif config.split_dir == "horizontal" and sz.height and sz.height > 0 then
+        vim.api.nvim_win_set_height(0, sz.height)
+      end
+      vim.cmd("wincmd p")
+    end
+    return bufnr
+  end
+
+  vim.cmd(split_cmds[config.split_dir] or split_cmds.vertical)
+  local bufnr = vim.api.nvim_get_current_buf()
+  configure_result_buffer(bufnr)
+
+  local sz = config.split_size or {}
+  if config.split_dir == "vertical" and sz.width and sz.width > 0 then
+    vim.api.nvim_win_set_width(0, sz.width)
+  elseif config.split_dir == "horizontal" and sz.height and sz.height > 0 then
+    vim.api.nvim_win_set_height(0, sz.height)
+  end
+
+  vim.cmd("wincmd p")
+  state.result_bufnr = bufnr
+  return bufnr
+end
+
+function M.execute()
+  local query = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+
+  if state.current_job then
+    pcall(function() state.current_job:kill(15) end)
+    state.current_job = nil
+  end
+
+  ensure_result_buffer()
+  set_status("-- dblite: running... (switch here and press <C-c> to cancel)")
+
+  local cmd = { config.binary }
+  if config.max_rows and config.max_rows > 0 then
+    table.insert(cmd, "--max-rows")
+    table.insert(cmd, tostring(config.max_rows))
+  end
+
+  local job
+  job = vim.system(cmd, { stdin = query, text = true }, function(result)
+    vim.schedule(function()
+      if state.current_job ~= job then return end
+      state.current_job = nil
+      if not state.result_bufnr or not vim.api.nvim_buf_is_valid(state.result_bufnr) then return end
+
+      if result.signal ~= 0 then
+        set_status("-- dblite: cancelled")
+        return
+      end
+
+      if result.code ~= 0 then
+        local err_lines = vim.split("-- dblite failed: " .. (result.stderr or ""), "\n", { plain = true })
+        vim.bo[state.result_bufnr].modifiable = true
+        vim.api.nvim_buf_set_lines(state.result_bufnr, 0, -1, false, err_lines)
+        vim.bo[state.result_bufnr].modifiable = false
+        return
+      end
+
+      local ok, parsed = pcall(vim.json.decode, result.stdout)
+      if not ok or type(parsed) ~= "table" then
+        set_status("-- dblite: failed to parse JSON: " .. tostring(parsed))
+        return
+      end
+
+      state.columns = parsed.columns or {}
+      state.rows = parsed.rows or {}
+      state.widths = compute_widths(state.rows, state.columns)
+      state.page = 1
+      render_page()
+    end)
+  end)
+  state.current_job = job
+end
+
+vim.api.nvim_create_user_command("DbliteRun", M.execute, {})
+
+return M

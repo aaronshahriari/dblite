@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(java -version)",
+      "Bash(mvn -version)",
+      "Bash(gradle -version)",
+      "Bash(mise use *)",
+      "Bash(mvn -q compile)"
+    ]
+  }
+}

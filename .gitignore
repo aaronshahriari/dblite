@@ -1,0 +1,17 @@
+# Maven build output
+target/
+
+# IDE files (Eclipse)
+.classpath
+.project
+.settings/
+
+# OS/editor junk
+.DS_Store
+*.swp
+*.swo
+
+# Local env/secrets
+.env
+.env.*
+*.local
