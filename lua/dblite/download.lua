@@ -129,4 +129,12 @@ function M.download_or_build()
   end
 end
 
+-- Check if binary exists; download only if missing. Safe to call every startup.
+function M.ensure_binary()
+  local root = plugin_root()
+  if not root then return end
+  if vim.fn.filereadable(root .. "/bin/dblite") == 1 then return end
+  M.download_or_build()
+end
+
 return M
