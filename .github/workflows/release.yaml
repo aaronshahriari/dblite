@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-linux
+          - os: ubuntu-24.04-arm
+            target: aarch64-linux
+          - os: macos-13
+            target: x86_64-macos
+          - os: macos-latest
+            target: aarch64-macos
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build native binary
+        run: mvn -q clean package -Pnative
+
+      - name: Stage release asset
+        run: cp bin/dblite dblite-${{ matrix.target }}
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dblite-${{ matrix.target }}

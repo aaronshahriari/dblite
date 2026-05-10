@@ -2,25 +2,20 @@
 
 A Neovim plugin for querying Oracle databases. Runs SQL from the current buffer, displays paginated results in a split, and manages named connections with env-var support for credentials.
 
-**Requires:** GraalVM with `native-image` on PATH (build step only).
+On install, dblite downloads a pre-built native binary from GitHub Releases. If no release binary matches your platform, it falls back to building from source (requires GraalVM with `native-image`).
 
 ## Installation
 
 ### vim.pack (Neovim 0.11+)
 
-Register the `PackChanged` hook **before** calling `vim.pack.add()` so the binary is compiled automatically on install and update:
+Register the `PackChanged` hook **before** `vim.pack.add()` — it runs the download automatically on install and update:
 
 ```lua
 vim.api.nvim_create_autocmd('PackChanged', {
   callback = function(ev)
     local name, kind = ev.data.spec.name, ev.data.kind
     if name == 'dblite' and (kind == 'install' or kind == 'update') then
-      vim.notify('dblite: building native binary (this takes a minute)...', vim.log.levels.INFO)
-      vim.system(
-        { 'mvn', '-q', 'clean', 'package', '-Pnative' },
-        { cwd = ev.data.path }
-      ):wait()
-      vim.notify('dblite: build complete', vim.log.levels.INFO)
+      require('dblite.download').download_or_build()
     end
   end,
 })
@@ -32,14 +27,14 @@ vim.pack.add({
 require('dblite').setup()
 ```
 
-If the hook wasn't in place when you first installed, run `:DbliteBuild` inside Neovim to compile the binary without reinstalling.
+If the hook wasn't in place when you first installed, run `:DbliteBuild` inside Neovim.
 
 ### lazy.nvim
 
 ```lua
 {
   'aaronshahriari/dblite',
-  build = 'mvn -q clean package -Pnative',
+  build = function() require('dblite.download').download_or_build() end,
   config = function()
     require('dblite').setup()
   end,
@@ -51,10 +46,9 @@ If the hook wasn't in place when you first installed, run `:DbliteBuild` inside 
 ```sh
 git clone https://github.com/aaronshahriari/dblite
 cd dblite
-mvn -q clean package -Pnative
 ```
 
-Add the directory to your Neovim `runtimepath`, then call `require('dblite').setup()`.
+Then open Neovim, add the directory to `runtimepath`, call `require('dblite').setup()`, and run `:DbliteBuild`.
 
 ## Connections
 
@@ -62,6 +56,7 @@ Connections are stored at `~/.local/share/nvim/dblite/connections.json` (chmod 6
 
 | Command | Description |
 |---|---|
+| `:DbliteBuild` | Compile the native binary via Maven (needed once after install). |
 | `:DbliteAddConn [uri]` | Add a connection. Accepts `oracle://user:pass@host:port/service` or prompts field-by-field. |
 | `:DbliteListConns` | List all connections. Active connection is marked `*`. |
 | `:DbliteUseConn <name>` | Set the active connection for `:DbliteRun`. |

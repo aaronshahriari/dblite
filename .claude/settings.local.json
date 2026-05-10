@@ -5,7 +5,8 @@
       "Bash(mvn -version)",
       "Bash(gradle -version)",
       "Bash(mise use *)",
-      "Bash(mvn -q compile)"
+      "Bash(mvn -q compile)",
+      "Bash(curl *)"
     ]
   }
 }

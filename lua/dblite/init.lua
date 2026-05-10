@@ -299,32 +299,16 @@ end
 
 vim.api.nvim_create_user_command("DbliteRun", M.execute, {})
 
--- :DbliteBuild — compile the native binary via Maven (runs asynchronously)
+-- :DbliteBuild — download pre-built binary from GitHub Releases, or build from source
 vim.api.nvim_create_user_command("DbliteBuild", function()
-  if not _plugin_root then
-    vim.notify("dblite: cannot determine plugin root", vim.log.levels.ERROR)
-    return
-  end
-  vim.notify("dblite: building native binary (this takes a minute)...", vim.log.levels.INFO)
-  vim.system(
-    { "mvn", "-q", "clean", "package", "-Pnative" },
-    { cwd = _plugin_root },
-    function(result)
-      vim.schedule(function()
-        if result.code ~= 0 then
-          vim.notify("dblite: build failed:\n" .. (result.stderr or "unknown error"), vim.log.levels.ERROR)
-          return
-        end
-        local bin = _plugin_root .. "/bin/dblite"
-        if vim.fn.filereadable(bin) == 1 then
-          config.binary = bin
-          vim.notify("dblite: build complete — binary ready", vim.log.levels.INFO)
-        else
-          vim.notify("dblite: build ran but binary not found at " .. bin, vim.log.levels.WARN)
-        end
-      end)
+  require("dblite.download").download_or_build()
+  -- Re-resolve binary path in case it was just created
+  if _plugin_root then
+    local bin = _plugin_root .. "/bin/dblite"
+    if vim.fn.filereadable(bin) == 1 then
+      config.binary = bin
     end
-  )
+  end
 end, {})
 
 -- Returns sorted list of saved connection names (used for tab-completion).
