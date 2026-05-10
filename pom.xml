@@ -60,6 +60,7 @@
                             </execution>
                         </executions>
                         <configuration>
+                            <outputDirectory>${project.basedir}/bin</outputDirectory>
                             <imageName>dblite</imageName>
                             <mainClass>${main.class}</mainClass>
                             <fallback>false</fallback>

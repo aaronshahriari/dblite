@@ -15,3 +15,6 @@ target/
 .env
 .env.*
 *.local
+
+# Compiled native binary (platform-specific; built by mvn -Pnative)
+bin/

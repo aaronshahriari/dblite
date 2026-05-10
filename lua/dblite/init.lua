@@ -1,4 +1,5 @@
-local config = require("dblite.config")
+local config      = require("dblite.config")
+local connections = require("dblite.connections")
 
 local M = {}
 
@@ -13,11 +14,12 @@ vim.api.nvim_set_hl(0, "DbliteStatusPage", { link = "Title", default = true })
 
 local state = {
   result_bufnr = nil,
-  current_job = nil,
-  rows = {},
-  columns = {},
-  widths = {},
-  page = 1,
+  current_job  = nil,
+  rows         = {},
+  columns      = {},
+  widths       = {},
+  page         = 1,
+  active_conn  = nil,
 }
 
 local function merge_into(target, source)
@@ -209,7 +211,17 @@ local function ensure_result_buffer()
   return bufnr
 end
 
+local function expand_env(s)
+  if type(s) ~= "string" then return s end
+  return (s:gsub("%$([%w_]+)", function(var) return os.getenv(var) or ("$" .. var) end))
+end
+
 function M.execute()
+  if not state.active_conn then
+    vim.notify("dblite: no active connection — use :DbliteUseConn <name>", vim.log.levels.ERROR)
+    return
+  end
+
   local query = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
 
   if state.current_job then
@@ -226,8 +238,15 @@ function M.execute()
     table.insert(cmd, tostring(config.max_rows))
   end
 
+  local c = state.active_conn
+  local sys_env = {
+    DB_URL      = connections.jdbc_url(c),
+    DB_USER     = expand_env(c.user),
+    DB_PASSWORD = expand_env(c.password or ""),
+  }
+
   local job
-  job = vim.system(cmd, { stdin = query, text = true }, function(result)
+  job = vim.system(cmd, { stdin = query, text = true, env = sys_env }, function(result)
     vim.schedule(function()
       if state.current_job ~= job then return end
       state.current_job = nil
@@ -263,5 +282,166 @@ function M.execute()
 end
 
 vim.api.nvim_create_user_command("DbliteRun", M.execute, {})
+
+-- Returns sorted list of saved connection names (used for tab-completion).
+local function conn_names()
+  local names = {}
+  for _, c in ipairs(connections.list()) do table.insert(names, c.name) end
+  table.sort(names)
+  return names
+end
+
+local function complete_name(arg_lead)
+  local out = {}
+  for _, n in ipairs(conn_names()) do
+    if n:sub(1, #arg_lead) == arg_lead then table.insert(out, n) end
+  end
+  return out
+end
+
+-- :DbliteAddConn — interactive; optionally accepts a URI as first argument
+-- URI format: oracle://user[:password]@host[:port]/service
+vim.api.nvim_create_user_command("DbliteAddConn", function(opts)
+  local fields
+
+  if opts.args ~= "" then
+    local parsed, err = connections.parse_uri(opts.args)
+    if not parsed then
+      vim.notify("dblite: " .. err, vim.log.levels.ERROR)
+      return
+    end
+    fields = parsed
+  else
+    -- Ask for URI first; blank means fall through to field-by-field
+    local uri_input = vim.fn.input("URI (oracle://user:pass@host:port/service) or blank for manual: ")
+    if uri_input ~= "" then
+      local parsed, err = connections.parse_uri(uri_input)
+      if not parsed then
+        vim.notify("\ndblite: " .. err, vim.log.levels.ERROR)
+        return
+      end
+      fields = parsed
+    end
+  end
+
+  local name = vim.fn.input("Connection name: ")
+  if name == "" then return end
+
+  if not fields then
+    local host     = vim.fn.input("Host: ")
+    if host == "" then return end
+    local port_s   = vim.fn.input("Port [1521]: ")
+    local service  = vim.fn.input("Service: ")
+    if service == "" then return end
+    local user     = vim.fn.input("User: ")
+    if user == "" then return end
+    local password = vim.fn.inputsecret("Password (or $ENV_VAR): ")
+    fields = {
+      host     = host,
+      port     = tonumber(port_s ~= "" and port_s or "1521") or 1521,
+      service  = service,
+      user     = user,
+      password = password,
+    }
+  else
+    -- URI path: password may be missing — give the user a chance to set it
+    if (fields.password or "") == "" then
+      fields.password = vim.fn.inputsecret("Password (or $ENV_VAR, leave blank to set later): ")
+    end
+  end
+
+  fields.name = name
+  local ok, result = pcall(connections.add, fields)
+  if ok then
+    vim.notify("\ndblite: saved connection '" .. name .. "'", vim.log.levels.INFO)
+  else
+    vim.notify("\ndblite: " .. tostring(result), vim.log.levels.ERROR)
+  end
+end, { nargs = "?" })
+
+-- :DbliteListConns — show all connections; active one is marked with *
+vim.api.nvim_create_user_command("DbliteListConns", function()
+  local conns = connections.list()
+  if #conns == 0 then
+    vim.notify("dblite: no connections saved. Use :DbliteAddConn", vim.log.levels.INFO)
+    return
+  end
+  local lines = { "dblite connections:" }
+  for _, c in ipairs(conns) do
+    local active = (state.active_conn and state.active_conn.id == c.id) and " *" or ""
+    table.insert(lines, string.format(
+      "  %-20s  %s@%s:%d/%s%s",
+      c.name, c.user, c.host, c.port or 1521, c.service, active
+    ))
+  end
+  vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
+end, {})
+
+-- :DbliteUseConn <name> — set the active connection for queries
+vim.api.nvim_create_user_command("DbliteUseConn", function(opts)
+  if opts.args == "" then
+    local msg = state.active_conn
+      and ("dblite: active connection: " .. state.active_conn.name)
+      or  "dblite: no active connection"
+    vim.notify(msg, vim.log.levels.INFO)
+    return
+  end
+  local conn = connections.get_by_name(opts.args)
+  if not conn then
+    vim.notify("dblite: connection '" .. opts.args .. "' not found", vim.log.levels.ERROR)
+    return
+  end
+  state.active_conn = conn
+  vim.notify("dblite: using '" .. conn.name .. "'", vim.log.levels.INFO)
+end, { nargs = "?", complete = complete_name })
+
+-- :DbliteEditConn <name> — re-prompt each field (leave blank to keep current value)
+vim.api.nvim_create_user_command("DbliteEditConn", function(opts)
+  local conn = connections.get_by_name(opts.args)
+  if not conn then
+    vim.notify("dblite: connection '" .. opts.args .. "' not found", vim.log.levels.ERROR)
+    return
+  end
+
+  local function prompt(label, current)
+    local v = vim.fn.input(label .. " [" .. tostring(current) .. "]: ")
+    return v ~= "" and v or current
+  end
+
+  local updates = {
+    name    = prompt("Name",    conn.name),
+    host    = prompt("Host",    conn.host),
+    port    = tonumber(prompt("Port", conn.port or 1521)),
+    service = prompt("Service", conn.service),
+    user    = prompt("User",    conn.user),
+  }
+  local pw = vim.fn.inputsecret("Password (leave blank to keep): ")
+  if pw ~= "" then updates.password = pw end
+
+  local ok, result = pcall(connections.update, conn.id, updates)
+  if not ok then
+    vim.notify("\ndblite: " .. tostring(result), vim.log.levels.ERROR)
+    return
+  end
+  -- keep active_conn in sync
+  if state.active_conn and state.active_conn.id == conn.id then
+    state.active_conn = connections.get(conn.id)
+  end
+  vim.notify("\ndblite: updated '" .. (updates.name or conn.name) .. "'", vim.log.levels.INFO)
+end, { nargs = 1, complete = complete_name })
+
+-- :DbliteDeleteConn <name> — permanently remove a saved connection
+vim.api.nvim_create_user_command("DbliteDeleteConn", function(opts)
+  local conn = connections.get_by_name(opts.args)
+  if not conn then
+    vim.notify("dblite: connection '" .. opts.args .. "' not found", vim.log.levels.ERROR)
+    return
+  end
+  if state.active_conn and state.active_conn.id == conn.id then
+    state.active_conn = nil
+  end
+  connections.delete(conn.id)
+  vim.notify("dblite: deleted '" .. conn.name .. "'", vim.log.levels.INFO)
+end, { nargs = 1, complete = complete_name })
 
 return M

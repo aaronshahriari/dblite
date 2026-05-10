@@ -1,5 +1,17 @@
+local function resolve_binary()
+  local src = debug.getinfo(1, "S").source
+  if src:sub(1, 1) == "@" then
+    local plugin_root = src:sub(2):gsub("/lua/dblite/config%.lua$", "")
+    local candidate = plugin_root .. "/bin/dblite"
+    if vim.fn.filereadable(candidate) == 1 then
+      return candidate
+    end
+  end
+  return "dblite"  -- fallback: binary must be on PATH
+end
+
 local M = {
-  binary = "/home/aaronshahriari/personal/dblite/target/dblite",
+  binary = resolve_binary(),
   max_rows = 10000,
   split_dir = "horizontal", -- "vertical" | "horizontal" | "tab"
   split_size = {
