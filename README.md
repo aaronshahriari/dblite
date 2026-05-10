@@ -8,14 +8,14 @@ A Neovim plugin for querying Oracle databases. Runs SQL from the current buffer,
 
 ### vim.pack (Neovim 0.11+)
 
-Register the `PackChanged` hook **before** calling `vim.pack.add()` so the build runs on install and update:
+Register the `PackChanged` hook **before** calling `vim.pack.add()` so the binary is compiled automatically on install and update:
 
 ```lua
 vim.api.nvim_create_autocmd('PackChanged', {
   callback = function(ev)
     local name, kind = ev.data.spec.name, ev.data.kind
     if name == 'dblite' and (kind == 'install' or kind == 'update') then
-      vim.notify('dblite: building native binary...', vim.log.levels.INFO)
+      vim.notify('dblite: building native binary (this takes a minute)...', vim.log.levels.INFO)
       vim.system(
         { 'mvn', '-q', 'clean', 'package', '-Pnative' },
         { cwd = ev.data.path }
@@ -31,6 +31,8 @@ vim.pack.add({
 
 require('dblite').setup()
 ```
+
+If the hook wasn't in place when you first installed, run `:DbliteBuild` inside Neovim to compile the binary without reinstalling.
 
 ### lazy.nvim
 
