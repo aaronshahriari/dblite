@@ -34,6 +34,7 @@ public class App {
         String query;
         try {
             query = new String(System.in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
+            query = query.replaceAll("[;/]\\s*$", "").trim();
         } catch (java.io.IOException e) {
             System.err.println("Failed to read query from stdin: " + e.getMessage());
             System.exit(1);
