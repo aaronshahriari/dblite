@@ -232,7 +232,7 @@ end
 
 local function configure_result_buffer(bufnr)
   vim.bo[bufnr].buftype = "nofile"
-  vim.bo[bufnr].bufhidden = "wipe"
+  vim.bo[bufnr].bufhidden = "hide"
   vim.bo[bufnr].swapfile = false
   vim.bo[bufnr].filetype = config.filetype or ""
 
@@ -597,6 +597,28 @@ vim.api.nvim_create_user_command("DbliteDeleteConn", function(opts)
   vim.notify("dblite: deleted '" .. conn.name .. "'", vim.log.levels.INFO)
   panel.refresh()
 end, { nargs = 1, complete = complete_name })
+
+function M.toggle_dbout()
+  if not state.result_bufnr or not vim.api.nvim_buf_is_valid(state.result_bufnr) then return end
+  local wins = vim.fn.win_findbuf(state.result_bufnr)
+  if #wins > 0 then
+    for _, winnr in ipairs(wins) do
+      pcall(vim.api.nvim_win_hide, winnr)
+    end
+  else
+    vim.cmd(split_cmds[config.split_dir] or split_cmds.vertical)
+    vim.api.nvim_win_set_buf(0, state.result_bufnr)
+    local sz = config.split_size or {}
+    if config.split_dir == "vertical" and sz.width and sz.width > 0 then
+      vim.api.nvim_win_set_width(0, sz.width)
+    elseif config.split_dir == "horizontal" and sz.height and sz.height > 0 then
+      vim.api.nvim_win_set_height(0, sz.height)
+    end
+    vim.cmd("wincmd p")
+  end
+end
+
+vim.api.nvim_create_user_command("DbliteToggleOut", M.toggle_dbout, {})
 
 -- Panel public API
 M.toggle_panel    = panel.toggle
