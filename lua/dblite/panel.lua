@@ -144,6 +144,7 @@ function M.open()
   vim.wo[winnr].signcolumn     = "no"
   vim.wo[winnr].wrap           = false
   vim.wo[winnr].cursorline     = true
+  vim.wo[winnr].winfixwidth    = true
 
   render()
 
