@@ -14,9 +14,9 @@ local _plugin_root = (function()
 end)()
 
 local split_cmds = {
-  vertical = "vnew",
-  horizontal = "new",
-  tab = "tabnew",
+  vertical   = "botright vnew",
+  horizontal = "botright new",
+  tab        = "tabnew",
 }
 
 local ns       = vim.api.nvim_create_namespace("dblite")
