@@ -22,7 +22,7 @@ local split_cmds = {
 local ns       = vim.api.nvim_create_namespace("dblite")
 local flash_ns = vim.api.nvim_create_namespace("dblite_flash")
 vim.api.nvim_set_hl(0, "DbliteStatusPage", { link = "Title",    default = true })
-vim.api.nvim_set_hl(0, "DbliteFlash",      { link = "IncSearch", default = true })
+vim.api.nvim_set_hl(0, "DbliteFlash",      { link = "Visual",    default = true })
 
 local state = {
   result_bufnr   = nil,
