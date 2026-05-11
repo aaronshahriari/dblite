@@ -21,14 +21,21 @@ local M = {
   filetype = "", -- buffer filetype for results. "" disables highlighting (fastest for huge results).
   page_size = 100,    -- rows per page in the result buffer
   max_col_width = 50, -- truncate cell values wider than this; 0 = no limit
+  panel = {
+    width = 30,  -- columns for the side panel
+  },
   keymaps = {
     dbout = {  -- keymaps active inside the result/output buffer
       next = "L",       -- next page (set to "" or false to disable)
       prev = "H",       -- prev page
       cancel = "<C-c>", -- kill in-flight query
     },
-    editor = {}, -- reserved: keymaps for the SQL editor buffer
-    panel = {},  -- reserved: keymaps for a future side panel
+    editor = {}, -- keymaps for the SQL editor buffer
+    panel = {    -- keymaps active inside the connections panel
+      select = "<CR>", -- activate connection under cursor
+      edit   = "cw",   -- edit connection under cursor
+      close  = "q",    -- close panel
+    },
   },
 }
 

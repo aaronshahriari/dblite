@@ -89,3 +89,13 @@ require('dblite').setup({
   },
 })
 ```
+
+## Todo
+- Integrated panel
+  - connections
+    - check mark next to currently connected
+  - queries per connection
+  - help menu (toggle via config)
+- Dbout
+  - show with ligatures
+  - keybind to pull into its own buffer (table, json, csv)

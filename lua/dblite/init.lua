@@ -1,5 +1,6 @@
 local config      = require("dblite.config")
 local connections = require("dblite.connections")
+local panel       = require("dblite.panel")
 
 local M = {}
 
@@ -327,6 +328,45 @@ local function complete_name(arg_lead)
   return out
 end
 
+local function edit_conn_by_name(name)
+  local conn = connections.get_by_name(name)
+  if not conn then
+    vim.notify("dblite: connection '" .. name .. "' not found", vim.log.levels.ERROR)
+    return
+  end
+
+  local function prompt(label, current)
+    local v = vim.fn.input(label .. " [" .. tostring(current) .. "]: ")
+    return v ~= "" and v or current
+  end
+
+  local updates = {
+    name    = prompt("Name",    conn.name),
+    host    = prompt("Host",    conn.host),
+    port    = tonumber(prompt("Port", conn.port or 1521)),
+    service = prompt("Service", conn.service),
+    user    = prompt("User",    conn.user),
+  }
+  local pw = vim.fn.inputsecret("Password (leave blank to keep): ")
+  if pw ~= "" then updates.password = pw end
+
+  local ok, result = pcall(connections.update, conn.id, updates)
+  if not ok then
+    vim.notify("\ndblite: " .. tostring(result), vim.log.levels.ERROR)
+    return
+  end
+  if state.active_conn and state.active_conn.id == conn.id then
+    state.active_conn = connections.get(conn.id)
+  end
+  vim.notify("\ndblite: updated '" .. (updates.name or conn.name) .. "'", vim.log.levels.INFO)
+  panel.refresh()
+end
+
+panel.setup({
+  get_state = function() return state end,
+  on_edit   = function(name) edit_conn_by_name(name) end,
+})
+
 -- :DbliteAddConn — interactive; optionally accepts a URI as first argument
 -- URI format: oracle://user[:password]@host[:port]/service
 vim.api.nvim_create_user_command("DbliteAddConn", function(opts)
@@ -382,6 +422,7 @@ vim.api.nvim_create_user_command("DbliteAddConn", function(opts)
   local ok, result = pcall(connections.add, fields)
   if ok then
     vim.notify("\ndblite: saved connection '" .. name .. "'", vim.log.levels.INFO)
+    panel.refresh()
   else
     vim.notify("\ndblite: " .. tostring(result), vim.log.levels.ERROR)
   end
@@ -421,41 +462,12 @@ vim.api.nvim_create_user_command("DbliteUseConn", function(opts)
   end
   state.active_conn = conn
   vim.notify("dblite: using '" .. conn.name .. "'", vim.log.levels.INFO)
+  panel.refresh()
 end, { nargs = "?", complete = complete_name })
 
 -- :DbliteEditConn <name> — re-prompt each field (leave blank to keep current value)
 vim.api.nvim_create_user_command("DbliteEditConn", function(opts)
-  local conn = connections.get_by_name(opts.args)
-  if not conn then
-    vim.notify("dblite: connection '" .. opts.args .. "' not found", vim.log.levels.ERROR)
-    return
-  end
-
-  local function prompt(label, current)
-    local v = vim.fn.input(label .. " [" .. tostring(current) .. "]: ")
-    return v ~= "" and v or current
-  end
-
-  local updates = {
-    name    = prompt("Name",    conn.name),
-    host    = prompt("Host",    conn.host),
-    port    = tonumber(prompt("Port", conn.port or 1521)),
-    service = prompt("Service", conn.service),
-    user    = prompt("User",    conn.user),
-  }
-  local pw = vim.fn.inputsecret("Password (leave blank to keep): ")
-  if pw ~= "" then updates.password = pw end
-
-  local ok, result = pcall(connections.update, conn.id, updates)
-  if not ok then
-    vim.notify("\ndblite: " .. tostring(result), vim.log.levels.ERROR)
-    return
-  end
-  -- keep active_conn in sync
-  if state.active_conn and state.active_conn.id == conn.id then
-    state.active_conn = connections.get(conn.id)
-  end
-  vim.notify("\ndblite: updated '" .. (updates.name or conn.name) .. "'", vim.log.levels.INFO)
+  edit_conn_by_name(opts.args)
 end, { nargs = 1, complete = complete_name })
 
 -- :DbliteDeleteConn <name> — permanently remove a saved connection
@@ -470,6 +482,17 @@ vim.api.nvim_create_user_command("DbliteDeleteConn", function(opts)
   end
   connections.delete(conn.id)
   vim.notify("dblite: deleted '" .. conn.name .. "'", vim.log.levels.INFO)
+  panel.refresh()
 end, { nargs = 1, complete = complete_name })
+
+-- Panel public API
+M.toggle_panel = panel.toggle
+M.open_panel   = panel.open
+M.close_panel  = panel.close
+M.is_panel_open = panel.is_open
+
+vim.api.nvim_create_user_command("DblitePanel", function()
+  panel.toggle()
+end, {})
 
 return M
