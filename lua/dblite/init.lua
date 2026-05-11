@@ -81,6 +81,9 @@ local function compute_widths(rows, columns)
   return widths
 end
 
+local set_winbar_header
+local clear_winbar
+
 local function render_page()
   local bufnr = state.result_bufnr
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
@@ -207,14 +210,14 @@ local function set_flash(bufnr, sr, sc, er, ec)
   end
 end
 
-local function clear_winbar()
+clear_winbar = function()
   if not state.result_bufnr or not vim.api.nvim_buf_is_valid(state.result_bufnr) then return end
   for _, winnr in ipairs(vim.fn.win_findbuf(state.result_bufnr)) do
     pcall(function() vim.wo[winnr].winbar = "" end)
   end
 end
 
-local function set_winbar_header()
+set_winbar_header = function()
   if not config.sticky_header then clear_winbar(); return end
   if not state.result_bufnr or not vim.api.nvim_buf_is_valid(state.result_bufnr) then return end
   if #state.columns == 0 then clear_winbar(); return end
@@ -389,6 +392,9 @@ local function execute_core(query)
       state.page         = 1
       state.last_elapsed = elapsed
       render_page()
+      if state.result_bufnr and #vim.fn.win_findbuf(state.result_bufnr) == 0 then
+        vim.notify("dblite: results ready — toggle dbout to view", vim.log.levels.INFO)
+      end
     end)
   end)
   state.current_job = job
