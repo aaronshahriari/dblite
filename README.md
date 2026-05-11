@@ -90,15 +90,39 @@ The active connection is marked with `✓`. Switching connections from the panel
 
 ## Running Queries
 
-Open any buffer, set an active connection with `:DbliteUseConn` (or via the panel), then run `:DbliteRun`. Results open in a paginated split.
+Open any buffer, set an active connection with `:DbliteUseConn` (or via the panel), then run a query:
+
+| Command | Description |
+|---|---|
+| `:Dblite run` | Run the entire buffer as a SQL query |
+| `:Dblite run at` | Run the statement under the cursor (treesitter-aware) |
+| `:Dblite toggle dbout` | Show/hide the result window (query keeps running if in-flight) |
+| `:Dblite inspect [json\|table\|csv]` | Open the current page in a scratch window, untruncated |
+
+The legacy `:DbliteRun`, `:DbliteRunAt`, and `:DbliteToggleOut` commands are kept as aliases.
+
+Trailing semicolons are stripped automatically — write SQL however feels natural.
+
+### Dbout keymaps
 
 | Key | Action |
 |---|---|
 | `L` | Next page |
 | `H` | Previous page |
 | `<C-c>` | Cancel in-flight query |
+| `gi` | Inspect current page (full untruncated output) |
 
-Trailing semicolons are stripped automatically — write SQL however feels natural.
+### Inspect
+
+`gi` (or `:Dblite inspect`) opens the current result page in a scratch window with no column truncation. Three formats are available — tab-complete `:Dblite inspect <tab>` to pick one:
+
+| Format | Description |
+|---|---|
+| `json` | Pretty-printed JSON via `jq` (falls back to raw if `jq` is not on PATH) |
+| `table` | Same layout as dbout, widths fit actual content |
+| `csv` | RFC-4180 escaped, ready to paste |
+
+The scratch window opens according to `json_view` (default `"tab"`). Press `q` to close it.
 
 ## API
 
@@ -107,49 +131,59 @@ All functionality is accessible programmatically:
 ```lua
 local db = require('dblite')
 
-db.execute()         -- run the current buffer as a SQL query
-db.toggle_panel()    -- open the connections panel (or close if already open)
-db.open_panel()      -- open the panel
-db.close_panel()     -- close the panel
-db.is_panel_open()   -- returns true/false
+db.execute()              -- run the current buffer as a SQL query
+db.execute_at_cursor()    -- run the statement under the cursor
+db.toggle_dbout()         -- show/hide the result window
+db.inspect(format)        -- open current page in scratch window ('json'|'table'|'csv')
+db.toggle_panel()         -- open/close the connections panel
+db.open_panel()           -- open the panel
+db.close_panel()          -- close the panel
+db.is_panel_open()        -- returns true/false
 ```
 
 Example keymap setup:
 
 ```lua
 local db = require('dblite')
-vim.keymap.set('n', '<leader>dr', db.execute,      { desc = 'dblite: run query' })
-vim.keymap.set('n', '<leader>dp', db.toggle_panel, { desc = 'dblite: toggle panel' })
+vim.keymap.set('n', '<leader>dr', db.execute,           { desc = 'dblite: run query' })
+vim.keymap.set('n', '<leader>de', db.execute_at_cursor, { desc = 'dblite: run at cursor' })
+vim.keymap.set('n', '<leader>dp', db.toggle_panel,      { desc = 'dblite: toggle panel' })
+vim.keymap.set('n', '<leader>do', db.toggle_dbout,      { desc = 'dblite: toggle dbout' })
 ```
 
 ## Configuration
 
 ```lua
 require('dblite').setup({
-  split_dir     = 'horizontal', -- 'vertical' | 'horizontal' | 'tab'
-  split_size    = { width = 80, height = 20 },
-  page_size     = 100,
-  max_rows      = 10000,
-  max_col_width = 50,
+  split_dir      = 'horizontal',  -- 'vertical' | 'horizontal' | 'tab'
+  split_size     = { width = 80, height = 20 },
+  page_size      = 100,           -- rows per page in the result buffer
+  max_rows       = 10000,         -- hard cap on rows returned
+  max_col_width  = 50,            -- truncate cells wider than this; 0 = no limit
+  filetype       = '',            -- filetype for the result buffer ('' = no highlighting)
+  flash_timeout  = 2000,          -- ms to hold the query highlight; 0 = hold until results
+  json_view      = 'tab',         -- where inspect opens: 'tab' | 'vertical' | 'horizontal' | 'float'
+  inspect_format = 'json',        -- default inspect format: 'json' | 'table' | 'csv'
   panel = {
-    width = 30,  -- side panel width in columns
+    width = 30,                   -- side panel width in columns
   },
   keymaps = {
-    dbout = { next = 'L', prev = 'H', cancel = '<C-c>' },
+    dbout = {
+      next    = 'L',              -- next page
+      prev    = 'H',              -- previous page
+      cancel  = '<C-c>',          -- cancel in-flight query
+      inspect = 'gi',             -- open inspector for current page
+    },
     panel = { select = '<CR>', edit = 'cw', close = 'q' },
   },
 })
 ```
 
 ## Todo
+- setup oracle bind parameters
+  - allow for some keybind to open popup buffer to edit bind params for current connection
 - Integrated panel
-  - connections
-    - check mark next to currently connected
   - queries per connection
     - ctrl-* open in splits etc
   - help menu (toggle via config)
-- Dbout
-  - better visual when running the query
-  - keybind to pull into its own buffer (table, json, csv)
-    - when bumping output into a new window allow for json output and showing the full column data
 - blink autocomplete for current connection
