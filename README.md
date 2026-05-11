@@ -150,6 +150,6 @@ require('dblite').setup({
   - help menu (toggle via config)
 - Dbout
   - better visual when running the query
-  - show with ligatures
   - keybind to pull into its own buffer (table, json, csv)
+    - when bumping output into a new window allow for json output and showing the full column data
 - blink autocomplete for current connection

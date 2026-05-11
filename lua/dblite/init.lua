@@ -630,4 +630,60 @@ vim.api.nvim_create_user_command("DblitePanel", function()
   panel.toggle()
 end, {})
 
+-- Unified :Dblite <subcommand> entry point
+do
+  local dispatch = {
+    run           = function(a) if a[2] == "at" then M.execute_at_cursor() else M.execute() end end,
+    toggle        = function(a)
+      if     a[2] == "panel" then panel.toggle()
+      elseif a[2] == "dbout" then M.toggle_dbout()
+      else vim.notify("dblite: toggle what? (panel | dbout)", vim.log.levels.ERROR) end
+    end,
+    conn          = function(a)
+      local sub = a[2]
+      if     sub == "add"  then vim.cmd("DbliteAddConn "  .. (a[3] or ""))
+      elseif sub == "list" then vim.cmd("DbliteListConns")
+      elseif sub == "use"  then vim.cmd("DbliteUseConn "  .. (a[3] or ""))
+      elseif sub == "edit" then vim.cmd("DbliteEditConn " .. (a[3] or ""))
+      elseif sub == "del"  then vim.cmd("DbliteDeleteConn " .. (a[3] or ""))
+      else vim.notify("dblite: conn what? (add | list | use | edit | del)", vim.log.levels.ERROR) end
+    end,
+    build         = function() vim.cmd("DbliteBuild") end,
+  }
+
+  local function complete(arg_lead, cmd_line)
+    local tokens = vim.split(cmd_line, "%s+")
+    local n = #tokens
+    if n == 2 then
+      return vim.tbl_filter(function(k) return k:sub(1, #arg_lead) == arg_lead end,
+        { "run", "toggle", "conn", "build" })
+    elseif n == 3 then
+      local sub = tokens[2]
+      local opts = {
+        run    = { "at" },
+        toggle = { "panel", "dbout" },
+        conn   = { "add", "list", "use", "edit", "del" },
+      }
+      local choices = opts[sub] or {}
+      return vim.tbl_filter(function(k) return k:sub(1, #arg_lead) == arg_lead end, choices)
+    elseif n >= 4 and tokens[2] == "conn" and (tokens[3] == "use" or tokens[3] == "edit" or tokens[3] == "del") then
+      return complete_name(arg_lead)
+    end
+    return {}
+  end
+
+  vim.api.nvim_create_user_command("Dblite", function(opts)
+    local args = vim.split(opts.args, "%s+")
+    local fn = dispatch[args[1]]
+    if fn then
+      fn(args)
+    else
+      vim.notify("dblite: unknown subcommand '" .. (args[1] or "") .. "'", vim.log.levels.ERROR)
+    end
+  end, {
+    nargs    = "+",
+    complete = complete,
+  })
+end
+
 return M
