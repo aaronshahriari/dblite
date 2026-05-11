@@ -174,7 +174,7 @@ local function start_spinner()
       return
     end
     local elapsed = (vim.uv.now() - state.spinner_start) / 1000
-    set_status(string.format("%s  %.1fs", SPINNER[idx], elapsed))
+    set_status(string.format("-- %s  %.1fs", SPINNER[idx], elapsed))
     idx = (idx % #SPINNER) + 1
   end))
   state.spinner_timer = timer
