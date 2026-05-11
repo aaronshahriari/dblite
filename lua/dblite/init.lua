@@ -174,7 +174,7 @@ local function start_spinner()
       return
     end
     local elapsed = (vim.uv.now() - state.spinner_start) / 1000
-    set_status(string.format("-- %s  %.1fs", SPINNER[idx], elapsed))
+    set_status(string.format("   %s  %.1fs", SPINNER[idx], elapsed))
     idx = (idx % #SPINNER) + 1
   end))
   state.spinner_timer = timer
@@ -198,6 +198,10 @@ local function set_flash(bufnr, sr, sc, er, ec)
       hl_group = "DbliteFlash",
       hl_eol   = true,
     })
+  end
+  local timeout = config.flash_timeout or 2000
+  if timeout > 0 then
+    vim.defer_fn(clear_flash, timeout)
   end
 end
 

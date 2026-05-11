@@ -24,6 +24,7 @@ local M = {
   panel = {
     width = 30,  -- columns for the side panel
   },
+  flash_timeout = 2000,  -- ms to hold the query highlight before auto-clearing (0 = wait for results)
   keymaps = {
     dbout = {  -- keymaps active inside the result/output buffer
       next = "L",       -- next page (set to "" or false to disable)
