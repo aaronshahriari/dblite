@@ -81,9 +81,6 @@ local function compute_widths(rows, columns)
   return widths
 end
 
-local set_winbar_header
-local clear_winbar
-
 local function render_page()
   local bufnr = state.result_bufnr
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
@@ -116,7 +113,6 @@ local function render_page()
       end_col = #status,
       hl_group = "DbliteStatusPage",
     })
-    set_winbar_header()
     return
   end
 
@@ -147,7 +143,6 @@ local function render_page()
     end_col = #status,
     hl_group = "DbliteStatusPage",
   })
-  set_winbar_header()
 end
 
 local function set_status(text)
@@ -207,29 +202,6 @@ local function set_flash(bufnr, sr, sc, er, ec)
   local timeout = config.flash_timeout or 2000
   if timeout > 0 then
     vim.defer_fn(clear_flash, timeout)
-  end
-end
-
-clear_winbar = function()
-  if not state.result_bufnr or not vim.api.nvim_buf_is_valid(state.result_bufnr) then return end
-  for _, winnr in ipairs(vim.fn.win_findbuf(state.result_bufnr)) do
-    pcall(function() vim.wo[winnr].winbar = "" end)
-  end
-end
-
-set_winbar_header = function()
-  if not config.sticky_header then clear_winbar(); return end
-  if not state.result_bufnr or not vim.api.nvim_buf_is_valid(state.result_bufnr) then return end
-  if #state.columns == 0 then clear_winbar(); return end
-  local wins = vim.fn.win_findbuf(state.result_bufnr)
-  if #wins == 0 then return end
-  local parts = {}
-  for _, col in ipairs(state.columns) do
-    table.insert(parts, cell(col, state.widths[col]))
-  end
-  local header = table.concat(parts, " | "):gsub("%%", "%%%%")
-  for _, winnr in ipairs(wins) do
-    pcall(function() vim.wo[winnr].winbar = header end)
   end
 end
 
@@ -365,13 +337,11 @@ local function execute_core(query)
       if not state.result_bufnr or not vim.api.nvim_buf_is_valid(state.result_bufnr) then return end
 
       if result.signal ~= 0 then
-        clear_winbar()
         set_status(string.format("-- cancelled  (%.3fs)", elapsed))
         return
       end
 
       if result.code ~= 0 then
-        clear_winbar()
         local err_lines = vim.split("-- dblite failed: " .. (result.stderr or ""), "\n", { plain = true })
         vim.bo[state.result_bufnr].modifiable = true
         vim.api.nvim_buf_set_lines(state.result_bufnr, 0, -1, false, err_lines)
@@ -381,7 +351,6 @@ local function execute_core(query)
 
       local ok, parsed = pcall(vim.json.decode, result.stdout)
       if not ok or type(parsed) ~= "table" then
-        clear_winbar()
         set_status("-- dblite: failed to parse JSON: " .. tostring(parsed))
         return
       end

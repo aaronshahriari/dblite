@@ -25,7 +25,6 @@ local M = {
     width = 30,  -- columns for the side panel
   },
   flash_timeout  = 2000,  -- ms to hold the query highlight before auto-clearing (0 = wait for results)
-  sticky_header  = true,  -- keep column names visible in a winbar while scrolling dbout
   keymaps = {
     dbout = {  -- keymaps active inside the result/output buffer
       next = "L",       -- next page (set to "" or false to disable)
