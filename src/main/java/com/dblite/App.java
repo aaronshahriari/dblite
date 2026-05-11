@@ -84,6 +84,17 @@ public class App {
     }
 
     private static String formatValue(ResultSet rs, int col, int sqlType) throws java.sql.SQLException {
+        if (sqlType == Types.BLOB) {
+            java.sql.Blob blob = rs.getBlob(col);
+            if (blob == null || rs.wasNull()) return "null";
+            return "\"<BLOB " + blob.length() + " bytes>\"";
+        }
+        if (sqlType == Types.CLOB || sqlType == Types.NCLOB) {
+            java.sql.Clob clob = rs.getClob(col);
+            if (clob == null || rs.wasNull()) return "null";
+            String val = clob.getSubString(1, (int) Math.min(clob.length(), 1_000_000));
+            return "\"" + escape(val) + "\"";
+        }
         String raw = rs.getString(col);
         if (raw == null || rs.wasNull()) return "null";
 
