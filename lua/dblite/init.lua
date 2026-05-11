@@ -1,6 +1,7 @@
-local config      = require("dblite.config")
-local connections = require("dblite.connections")
-local panel       = require("dblite.panel")
+local config       = require("dblite.config")
+local connections  = require("dblite.connections")
+local panel        = require("dblite.panel")
+local query_module = require("dblite.query")
 
 local M = {}
 
@@ -18,17 +19,23 @@ local split_cmds = {
   tab = "tabnew",
 }
 
-local ns = vim.api.nvim_create_namespace("dblite")
-vim.api.nvim_set_hl(0, "DbliteStatusPage", { link = "Title", default = true })
+local ns       = vim.api.nvim_create_namespace("dblite")
+local flash_ns = vim.api.nvim_create_namespace("dblite_flash")
+vim.api.nvim_set_hl(0, "DbliteStatusPage", { link = "Title",    default = true })
+vim.api.nvim_set_hl(0, "DbliteFlash",      { link = "IncSearch", default = true })
 
 local state = {
-  result_bufnr = nil,
-  current_job  = nil,
-  rows         = {},
-  columns      = {},
-  widths       = {},
-  page         = 1,
-  active_conn  = nil,
+  result_bufnr   = nil,
+  current_job    = nil,
+  rows           = {},
+  columns        = {},
+  widths         = {},
+  page           = 1,
+  active_conn    = nil,
+  spinner_timer  = nil,
+  spinner_start  = 0,
+  last_elapsed   = nil,
+  flash_bufnr    = nil,
 }
 
 local function merge_into(target, source)
@@ -88,9 +95,12 @@ local function render_page()
   local end_row = math.min(start_row + page_size - 1, total)
 
   local lines = {}
-  local status = total == 0
+  local base = total == 0
     and "(no rows)"
     or string.format("(%d/%d)", state.page, total_pages)
+  local status = state.last_elapsed
+    and (base .. string.format("  —  %.3fs", state.last_elapsed))
+    or base
   table.insert(lines, status)
   table.insert(lines, "")
 
@@ -143,6 +153,54 @@ local function set_status(text)
   vim.bo[bufnr].modifiable = false
 end
 
+local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+
+local function stop_spinner()
+  if state.spinner_timer then
+    state.spinner_timer:stop()
+    state.spinner_timer:close()
+    state.spinner_timer = nil
+  end
+end
+
+local function start_spinner()
+  stop_spinner()
+  local idx = 1
+  state.spinner_start = vim.uv.now()
+  local timer = vim.uv.new_timer()
+  timer:start(0, 80, vim.schedule_wrap(function()
+    if not state.result_bufnr or not vim.api.nvim_buf_is_valid(state.result_bufnr) then
+      stop_spinner()
+      return
+    end
+    local elapsed = (vim.uv.now() - state.spinner_start) / 1000
+    set_status(string.format("%s  %.1fs", SPINNER[idx], elapsed))
+    idx = (idx % #SPINNER) + 1
+  end))
+  state.spinner_timer = timer
+end
+
+local function clear_flash()
+  if state.flash_bufnr and vim.api.nvim_buf_is_valid(state.flash_bufnr) then
+    vim.api.nvim_buf_clear_namespace(state.flash_bufnr, flash_ns, 0, -1)
+  end
+  state.flash_bufnr = nil
+end
+
+local function set_flash(bufnr, sr, sc, er, ec)
+  clear_flash()
+  state.flash_bufnr = bufnr
+  local end_row = (ec == 0 and er > sr) and er - 1 or er
+  local lines = vim.api.nvim_buf_get_lines(bufnr, sr, end_row + 1, false)
+  for i, line in ipairs(lines) do
+    vim.api.nvim_buf_set_extmark(bufnr, flash_ns, sr + i - 1, 0, {
+      end_col  = #line,
+      hl_group = "DbliteFlash",
+      hl_eol   = true,
+    })
+  end
+end
+
 local function configure_result_buffer(bufnr)
   vim.bo[bufnr].buftype = "nofile"
   vim.bo[bufnr].bufhidden = "wipe"
@@ -170,7 +228,9 @@ local function configure_result_buffer(bufnr)
   map(km.cancel, function()
     if state.current_job then
       pcall(function() state.current_job:kill(15) end)
-      set_status("-- dblite: cancelling...")
+      stop_spinner()
+      clear_flash()
+      set_status("-- cancelling...")
     end
   end, "dblite: cancel query")
 
@@ -225,7 +285,7 @@ local function expand_env(s)
   return (s:gsub("%$([%w_]+)", function(var) return os.getenv(var) or ("$" .. var) end))
 end
 
-function M.execute()
+local function execute_core(query)
   if vim.fn.executable(config.binary) ~= 1 then
     local hint = _plugin_root
       and "run :DbliteBuild to compile the native binary"
@@ -239,15 +299,14 @@ function M.execute()
     return
   end
 
-  local query = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
-
   if state.current_job then
     pcall(function() state.current_job:kill(15) end)
     state.current_job = nil
   end
 
+  state.last_elapsed = nil
   ensure_result_buffer()
-  set_status("-- dblite: running... (switch here and press <C-c> to cancel)")
+  start_spinner()
 
   local cmd = { config.binary }
   if config.max_rows and config.max_rows > 0 then
@@ -267,10 +326,14 @@ function M.execute()
     vim.schedule(function()
       if state.current_job ~= job then return end
       state.current_job = nil
+      local elapsed = (vim.uv.now() - state.spinner_start) / 1000
+      stop_spinner()
+      clear_flash()
+
       if not state.result_bufnr or not vim.api.nvim_buf_is_valid(state.result_bufnr) then return end
 
       if result.signal ~= 0 then
-        set_status("-- dblite: cancelled")
+        set_status(string.format("-- cancelled  (%.3fs)", elapsed))
         return
       end
 
@@ -288,17 +351,35 @@ function M.execute()
         return
       end
 
-      state.columns = parsed.columns or {}
-      state.rows = parsed.rows or {}
-      state.widths = compute_widths(state.rows, state.columns)
-      state.page = 1
+      state.columns      = parsed.columns or {}
+      state.rows         = parsed.rows    or {}
+      state.widths       = compute_widths(state.rows, state.columns)
+      state.page         = 1
+      state.last_elapsed = elapsed
       render_page()
     end)
   end)
   state.current_job = job
 end
 
-vim.api.nvim_create_user_command("DbliteRun", M.execute, {})
+function M.execute()
+  local query = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+  execute_core(query)
+end
+
+function M.execute_at_cursor()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local sr, sc, er, ec, query = query_module.at_cursor(bufnr)
+  if not sr or not query or query:match("^%s*$") then
+    vim.notify("dblite: no query at cursor", vim.log.levels.WARN)
+    return
+  end
+  set_flash(bufnr, sr, sc, er, ec)
+  execute_core(query)
+end
+
+vim.api.nvim_create_user_command("DbliteRun",   M.execute,           {})
+vim.api.nvim_create_user_command("DbliteRunAt", M.execute_at_cursor, {})
 
 -- :DbliteBuild — download pre-built binary from GitHub Releases, or build from source
 vim.api.nvim_create_user_command("DbliteBuild", function()
@@ -486,10 +567,10 @@ vim.api.nvim_create_user_command("DbliteDeleteConn", function(opts)
 end, { nargs = 1, complete = complete_name })
 
 -- Panel public API
-M.toggle_panel = panel.toggle
-M.open_panel   = panel.open
-M.close_panel  = panel.close
-M.is_panel_open = panel.is_open
+M.toggle_panel    = panel.toggle
+M.open_panel      = panel.open
+M.close_panel     = panel.close
+M.is_panel_open   = panel.is_open
 
 vim.api.nvim_create_user_command("DblitePanel", function()
   panel.toggle()
