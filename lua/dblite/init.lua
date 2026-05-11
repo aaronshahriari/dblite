@@ -36,6 +36,7 @@ local state = {
   spinner_start  = 0,
   last_elapsed   = nil,
   flash_bufnr    = nil,
+  raw_json       = nil,
 }
 
 local function merge_into(target, source)
@@ -238,6 +239,10 @@ local function configure_result_buffer(bufnr)
     end
   end, "dblite: cancel query")
 
+  map(km.inspect or "gi", function()
+    M.inspect()
+  end, "dblite: inspect current page")
+
   vim.api.nvim_create_autocmd("BufWipeout", {
     buffer = bufnr,
     once = true,
@@ -309,6 +314,7 @@ local function execute_core(query)
   end
 
   state.last_elapsed = nil
+  state.raw_json     = nil
   ensure_result_buffer()
   start_spinner()
 
@@ -360,6 +366,7 @@ local function execute_core(query)
       state.widths       = compute_widths(state.rows, state.columns)
       state.page         = 1
       state.last_elapsed = elapsed
+      state.raw_json     = result.stdout
       render_page()
       if state.result_bufnr and #vim.fn.win_findbuf(state.result_bufnr) == 0 then
         vim.notify("dblite: results ready — toggle dbout to view", vim.log.levels.INFO)
@@ -605,6 +612,135 @@ vim.api.nvim_create_user_command("DblitePanel", function()
   panel.toggle()
 end, {})
 
+function M.inspect(format)
+  format = format or config.inspect_format or "json"
+
+  local page_size = config.page_size or 100
+  local start_row = (state.page - 1) * page_size + 1
+  local end_row   = math.min(start_row + page_size - 1, #state.rows)
+  local page_rows = {}
+  for i = start_row, end_row do
+    table.insert(page_rows, state.rows[i])
+  end
+
+  local lines = {}
+
+  if format == "json" then
+    if not state.raw_json then
+      vim.notify("dblite: no query result to inspect", vim.log.levels.WARN)
+      return
+    end
+    local ok, decoded = pcall(vim.json.decode, state.raw_json)
+    if not ok then
+      vim.notify("dblite: could not parse stored JSON", vim.log.levels.ERROR)
+      return
+    end
+    local page_data = { columns = decoded.columns, rows = page_rows }
+    local encoded   = vim.json.encode(page_data) or ""
+    local pretty_ok = false
+    pcall(function()
+      local r = vim.system({ "jq", "." }, { stdin = encoded }):wait()
+      if r.code == 0 and r.stdout and #r.stdout > 0 then
+        lines     = vim.split(r.stdout, "\n", { plain = true })
+        pretty_ok = true
+      end
+    end)
+    if not pretty_ok then
+      lines = vim.split(encoded, "\n", { plain = true })
+    end
+
+  elseif format == "table" then
+    if #state.columns == 0 then
+      vim.notify("dblite: no query result to inspect", vim.log.levels.WARN)
+      return
+    end
+    local widths = {}
+    for _, col in ipairs(state.columns) do widths[col] = #tostring(col) end
+    for _, row in ipairs(page_rows) do
+      for _, col in ipairs(state.columns) do
+        local s = (row[col] == nil or row[col] == vim.NIL) and "" or tostring(row[col])
+        if #s > widths[col] then widths[col] = #s end
+      end
+    end
+    local function pad(val, w)
+      local s = (val == nil or val == vim.NIL) and "" or tostring(val)
+      return s .. string.rep(" ", w - #s)
+    end
+    local headers, seps = {}, {}
+    for _, col in ipairs(state.columns) do
+      table.insert(headers, pad(col, widths[col]))
+      table.insert(seps,    string.rep("-", widths[col]))
+    end
+    table.insert(lines, table.concat(headers, " | "))
+    table.insert(lines, table.concat(seps,    "-+-"))
+    for _, row in ipairs(page_rows) do
+      local parts = {}
+      for _, col in ipairs(state.columns) do
+        table.insert(parts, pad(row[col], widths[col]))
+      end
+      table.insert(lines, table.concat(parts, " | "))
+    end
+
+  elseif format == "csv" then
+    if #state.columns == 0 then
+      vim.notify("dblite: no query result to inspect", vim.log.levels.WARN)
+      return
+    end
+    local function csv_escape(val)
+      local s = (val == nil or val == vim.NIL) and "" or tostring(val)
+      if s:find('[,"\n\r]') then s = '"' .. s:gsub('"', '""') .. '"' end
+      return s
+    end
+    table.insert(lines, table.concat(vim.tbl_map(csv_escape, state.columns), ","))
+    for _, row in ipairs(page_rows) do
+      local parts = {}
+      for _, col in ipairs(state.columns) do table.insert(parts, csv_escape(row[col])) end
+      table.insert(lines, table.concat(parts, ","))
+    end
+
+  else
+    vim.notify("dblite: unknown inspect format '" .. format .. "' (json|table|csv)", vim.log.levels.ERROR)
+    return
+  end
+
+  local view     = config.json_view or "tab"
+  local filetype = format == "json" and "json" or format == "csv" and "csv" or ""
+  local bufnr, winnr
+
+  if view == "float" then
+    local width  = math.floor(vim.o.columns * 0.85)
+    local height = math.floor(vim.o.lines   * 0.80)
+    local frow   = math.floor((vim.o.lines   - height) / 2)
+    local fcol   = math.floor((vim.o.columns - width)  / 2)
+    bufnr = vim.api.nvim_create_buf(false, true)
+    winnr = vim.api.nvim_open_win(bufnr, true, {
+      relative = "editor", style = "minimal", border = "rounded",
+      width = width, height = height, row = frow, col = fcol,
+    })
+    vim.keymap.set("n", "q", function() vim.api.nvim_win_close(winnr, true) end,
+      { buffer = bufnr, silent = true })
+  else
+    local cmds = { tab = "tabnew", vertical = "botright vnew", horizontal = "botright new" }
+    vim.cmd(cmds[view] or "tabnew")
+    bufnr = vim.api.nvim_get_current_buf()
+    winnr = vim.api.nvim_get_current_win()
+    vim.keymap.set("n", "q", "<cmd>bd<cr>", { buffer = bufnr, silent = true })
+  end
+
+  vim.bo[bufnr].buftype   = "nofile"
+  vim.bo[bufnr].bufhidden = "wipe"
+  vim.bo[bufnr].swapfile  = false
+  vim.bo[bufnr].filetype  = filetype
+  vim.wo[winnr].wrap          = false
+  vim.wo[winnr].linebreak     = false
+  vim.wo[winnr].number        = false
+  vim.wo[winnr].sidescrolloff = 3
+  vim.bo[bufnr].synmaxcol     = 500
+
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.bo[bufnr].modifiable = false
+end
+
 -- Unified :Dblite <subcommand> entry point
 do
   local dispatch = {
@@ -624,6 +760,7 @@ do
       else vim.notify("dblite: conn what? (add | list | use | edit | del)", vim.log.levels.ERROR) end
     end,
     build         = function() vim.cmd("DbliteBuild") end,
+    inspect       = function(a) M.inspect(a[2]) end,
   }
 
   local function complete(arg_lead, cmd_line)
@@ -631,13 +768,14 @@ do
     local n = #tokens
     if n == 2 then
       return vim.tbl_filter(function(k) return k:sub(1, #arg_lead) == arg_lead end,
-        { "run", "toggle", "conn", "build" })
+        { "run", "toggle", "conn", "build", "inspect" })
     elseif n == 3 then
       local sub = tokens[2]
       local opts = {
-        run    = { "at" },
-        toggle = { "panel", "dbout" },
-        conn   = { "add", "list", "use", "edit", "del" },
+        run     = { "at" },
+        toggle  = { "panel", "dbout" },
+        conn    = { "add", "list", "use", "edit", "del" },
+        inspect = { "json", "table", "csv" },
       }
       local choices = opts[sub] or {}
       return vim.tbl_filter(function(k) return k:sub(1, #arg_lead) == arg_lead end, choices)

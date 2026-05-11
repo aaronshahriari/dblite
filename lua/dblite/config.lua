@@ -25,11 +25,14 @@ local M = {
     width = 30,  -- columns for the side panel
   },
   flash_timeout  = 2000,  -- ms to hold the query highlight before auto-clearing (0 = wait for results)
+  json_view      = "tab",  -- where to open the inspector: "tab" | "vertical" | "horizontal" | "float"
+  inspect_format = "json", -- default inspect format: "json" | "table" | "csv"
   keymaps = {
     dbout = {  -- keymaps active inside the result/output buffer
-      next = "L",       -- next page (set to "" or false to disable)
-      prev = "H",       -- prev page
-      cancel = "<C-c>", -- kill in-flight query
+      next    = "L",       -- next page (set to "" or false to disable)
+      prev    = "H",       -- prev page
+      cancel  = "<C-c>",  -- kill in-flight query
+      inspect = "gi",      -- open inspector for current page
     },
     editor = {}, -- keymaps for the SQL editor buffer
     panel = {    -- keymaps active inside the connections panel
