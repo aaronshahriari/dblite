@@ -137,6 +137,7 @@ db.execute()              -- run the current buffer as a SQL query
 db.execute_at_cursor()    -- run the statement under the cursor
 db.toggle_dbout()         -- show/hide the result window
 db.inspect(format)        -- open current page in scratch window ('json'|'table'|'csv')
+db.edit_binds()           -- open the bind parameter popup (view/edit session binds)
 db.toggle_panel()         -- open/close the connections panel
 db.open_panel()           -- open the panel
 db.close_panel()          -- close the panel
