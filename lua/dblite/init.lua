@@ -343,65 +343,100 @@ local function apply_binds(sql, binds)
   return sql
 end
 
-local function show_bind_popup(params, current_binds, on_confirm)
-  local max_len = 0
-  for _, name in ipairs(params) do
-    if #name > max_len then max_len = #name end
-  end
+vim.api.nvim_set_hl(0, "DbliteBindLabel", { bold = true, default = true })
 
+local function show_bind_popup(params, current_binds, on_confirm)
   local lines = {}
   for _, name in ipairs(params) do
     local val = current_binds[name] or ""
-    table.insert(lines, string.format("%-" .. max_len .. "s  %s", name, val))
+    table.insert(lines, name .. ": " .. val)
   end
 
-  local footer  = " <CR> confirm  <Esc> cancel "
-  local width   = math.max(#footer, max_len + 32)
-  local height  = #params
-  local row     = math.floor((vim.o.lines   - height) / 2)
-  local col     = math.floor((vim.o.columns - width)  / 2)
+  local width  = math.max(60, (function()
+    local m = 0
+    for _, l in ipairs(lines) do if #l > m then m = #l end end
+    return m + 20
+  end)())
+  local height = #params
+  local row    = math.floor((vim.o.lines   - height) / 2)
+  local col    = math.floor((vim.o.columns - width)  / 2)
 
   local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-  vim.bo[bufnr].buftype   = "nofile"
+  vim.bo[bufnr].buftype   = "acwrite"
   vim.bo[bufnr].bufhidden = "wipe"
+  vim.bo[bufnr].swapfile  = false
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.bo[bufnr].modified = false
+
+  local ns = vim.api.nvim_create_namespace("dblite_bind_labels")
+  for i, name in ipairs(params) do
+    vim.api.nvim_buf_set_extmark(bufnr, ns, i - 1, 0, {
+      end_col  = #name + 1,
+      hl_group = "DbliteBindLabel",
+    })
+  end
 
   local winnr = vim.api.nvim_open_win(bufnr, true, {
-    relative   = "editor",
-    style      = "minimal",
-    border     = "rounded",
-    title      = " Bind Parameters ",
-    title_pos  = "center",
-    footer     = footer,
-    footer_pos = "center",
-    width      = width,
-    height     = height,
-    row        = row,
-    col        = col,
+    relative  = "editor",
+    style     = "minimal",
+    border    = "rounded",
+    title     = " Bind Parameters ",
+    title_pos = "center",
+    width     = width,
+    height    = height,
+    row       = row,
+    col       = col,
   })
 
-  vim.wo[winnr].cursorline = true
+  local done = false
 
   local function confirm()
-    if not vim.api.nvim_win_is_valid(winnr) then return end
+    if done then return end
+    done = true
     local result = {}
     local buf_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
     for i, line in ipairs(buf_lines) do
       if params[i] then
-        -- value starts after the padded name + 2 spaces
-        local val = line:sub(max_len + 3):match("^%s*(.-)%s*$")
+        local val = line:match("^[^:]+:%s*(.-)%s*$") or ""
         result[params[i]] = val
       end
     end
-    vim.api.nvim_win_close(winnr, true)
+    if vim.api.nvim_win_is_valid(winnr) then
+      vim.api.nvim_win_close(winnr, true)
+    end
     on_confirm(result)
   end
 
   local function cancel()
-    if not vim.api.nvim_win_is_valid(winnr) then return end
-    vim.api.nvim_win_close(winnr, true)
+    if done then return end
+    done = true
+    if vim.api.nvim_win_is_valid(winnr) then
+      vim.api.nvim_win_close(winnr, true)
+    end
     on_confirm(nil)
   end
+
+  -- :w / :wq → confirm
+  vim.api.nvim_create_autocmd("BufWriteCmd", {
+    buffer   = bufnr,
+    callback = function()
+      vim.bo[bufnr].modified = false
+      confirm()
+    end,
+  })
+
+  -- keep buffer "unmodified" so :q never complains about unsaved changes
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+    buffer   = bufnr,
+    callback = function() vim.bo[bufnr].modified = false end,
+  })
+
+  -- closing window without :w cancels
+  vim.api.nvim_create_autocmd("WinClosed", {
+    pattern  = tostring(winnr),
+    once     = true,
+    callback = function() cancel() end,
+  })
 
   vim.keymap.set("n", "<CR>",  confirm, { buffer = bufnr, silent = true })
   vim.keymap.set("n", "<Esc>", cancel,  { buffer = bufnr, silent = true })
@@ -410,8 +445,8 @@ local function show_bind_popup(params, current_binds, on_confirm)
   vim.keymap.set("i", "<Esc>", function() vim.cmd("stopinsert"); cancel() end,
     { buffer = bufnr, silent = true })
 
-  -- start in normal mode on first line, value column
-  vim.api.nvim_win_set_cursor(winnr, { 1, max_len + 2 })
+  -- position cursor after the first "name: " in normal mode
+  vim.api.nvim_win_set_cursor(winnr, { 1, #params[1] + 2 })
 end
 
 local function expand_env(s)
