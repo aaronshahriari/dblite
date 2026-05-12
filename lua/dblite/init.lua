@@ -343,39 +343,28 @@ local function apply_binds(sql, binds)
   return sql
 end
 
-local _bind_popup_ns = vim.api.nvim_create_namespace("dblite_bind_popup")
-
 local function show_bind_popup(params, current_binds, on_confirm)
   local max_len = 0
   for _, name in ipairs(params) do
     if #name > max_len then max_len = #name end
   end
 
-  local values = {}
+  local lines = {}
   for _, name in ipairs(params) do
-    table.insert(values, current_binds[name] or "")
+    local val = current_binds[name] or ""
+    table.insert(lines, string.format("%-" .. max_len .. "s  %s", name, val))
   end
 
-  local label_w = max_len + 3
-  local val_w   = 30
-  local width   = math.max(44, label_w + val_w)
+  local footer  = " <CR> confirm  <Esc> cancel "
+  local width   = math.max(#footer, max_len + 32)
   local height  = #params
   local row     = math.floor((vim.o.lines   - height) / 2)
   local col     = math.floor((vim.o.columns - width)  / 2)
 
   local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, values)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
   vim.bo[bufnr].buftype   = "nofile"
   vim.bo[bufnr].bufhidden = "wipe"
-
-  for i, name in ipairs(params) do
-    local label = string.format("%-" .. max_len .. "s : ", name)
-    vim.api.nvim_buf_set_extmark(bufnr, _bind_popup_ns, i - 1, 0, {
-      virt_text     = {{ label, "Comment" }},
-      virt_text_pos = "inline",
-      right_gravity = false,
-    })
-  end
 
   local winnr = vim.api.nvim_open_win(bufnr, true, {
     relative   = "editor",
@@ -383,7 +372,7 @@ local function show_bind_popup(params, current_binds, on_confirm)
     border     = "rounded",
     title      = " Bind Parameters ",
     title_pos  = "center",
-    footer     = " strings: 'val'  numbers: 42  <CR> confirm  <Esc> cancel ",
+    footer     = footer,
     footer_pos = "center",
     width      = width,
     height     = height,
@@ -397,8 +386,12 @@ local function show_bind_popup(params, current_binds, on_confirm)
     if not vim.api.nvim_win_is_valid(winnr) then return end
     local result = {}
     local buf_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    for i, val in ipairs(buf_lines) do
-      if params[i] then result[params[i]] = val:match("^%s*(.-)%s*$") end
+    for i, line in ipairs(buf_lines) do
+      if params[i] then
+        -- value starts after the padded name + 2 spaces
+        local val = line:sub(max_len + 3):match("^%s*(.-)%s*$")
+        result[params[i]] = val
+      end
     end
     vim.api.nvim_win_close(winnr, true)
     on_confirm(result)
@@ -410,35 +403,15 @@ local function show_bind_popup(params, current_binds, on_confirm)
     on_confirm(nil)
   end
 
-  local function next_field()
-    local cur  = vim.api.nvim_win_get_cursor(winnr)[1]
-    local nxt  = (cur % #params) + 1
-    vim.api.nvim_win_set_cursor(winnr, { nxt, 0 })
-    vim.cmd("normal! $")
-  end
-
-  local function prev_field()
-    local cur  = vim.api.nvim_win_get_cursor(winnr)[1]
-    local prev = ((cur - 2 + #params) % #params) + 1
-    vim.api.nvim_win_set_cursor(winnr, { prev, 0 })
-    vim.cmd("normal! $")
-  end
-
-  vim.keymap.set("n", "<CR>",    confirm,    { buffer = bufnr, silent = true })
-  vim.keymap.set("n", "<Esc>",   cancel,     { buffer = bufnr, silent = true })
-  vim.keymap.set("i", "<CR>",    function() vim.cmd("stopinsert"); confirm() end,
+  vim.keymap.set("n", "<CR>",  confirm, { buffer = bufnr, silent = true })
+  vim.keymap.set("n", "<Esc>", cancel,  { buffer = bufnr, silent = true })
+  vim.keymap.set("i", "<CR>",  function() vim.cmd("stopinsert"); confirm() end,
     { buffer = bufnr, silent = true })
-  vim.keymap.set("i", "<Esc>",   function() vim.cmd("stopinsert"); cancel() end,
-    { buffer = bufnr, silent = true })
-  vim.keymap.set("i", "<Tab>",   next_field, { buffer = bufnr, silent = true })
-  vim.keymap.set("i", "<S-Tab>", prev_field, { buffer = bufnr, silent = true })
-  vim.keymap.set("n", "<Tab>",   function() next_field(); vim.cmd("startinsert!") end,
-    { buffer = bufnr, silent = true })
-  vim.keymap.set("n", "<S-Tab>", function() prev_field(); vim.cmd("startinsert!") end,
+  vim.keymap.set("i", "<Esc>", function() vim.cmd("stopinsert"); cancel() end,
     { buffer = bufnr, silent = true })
 
-  vim.api.nvim_win_set_cursor(winnr, { 1, 0 })
-  vim.cmd("startinsert!")
+  -- start in normal mode on first line, value column
+  vim.api.nvim_win_set_cursor(winnr, { 1, max_len + 2 })
 end
 
 local function expand_env(s)
