@@ -380,8 +380,10 @@ local function show_bind_popup(params, current_binds, on_confirm)
     relative  = "editor",
     style     = "minimal",
     border    = "rounded",
-    title     = " Bind Parameters ",
-    title_pos = "center",
+    title      = " Bind Parameters ",
+    title_pos  = "center",
+    footer     = " :w confirm  <C-c> cancel ",
+    footer_pos = "center",
     width     = width,
     height    = height,
     row       = row,
@@ -439,10 +441,10 @@ local function show_bind_popup(params, current_binds, on_confirm)
   })
 
   vim.keymap.set("n", "<CR>",  confirm, { buffer = bufnr, silent = true })
-  vim.keymap.set("n", "<Esc>", cancel,  { buffer = bufnr, silent = true })
+  vim.keymap.set("n", "<C-c>", cancel,  { buffer = bufnr, silent = true })
   vim.keymap.set("i", "<CR>",  function() vim.cmd("stopinsert"); confirm() end,
     { buffer = bufnr, silent = true })
-  vim.keymap.set("i", "<Esc>", function() vim.cmd("stopinsert"); cancel() end,
+  vim.keymap.set("i", "<C-c>", function() vim.cmd("stopinsert"); cancel() end,
     { buffer = bufnr, silent = true })
 
   -- position cursor after the first "name: " in normal mode

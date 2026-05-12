@@ -126,6 +126,26 @@ Trailing semicolons are stripped automatically — write SQL however feels natur
 
 The scratch window opens according to `json_view` (default `"tab"`). Press `q` to close it.
 
+### Bind Parameters
+
+When a query contains `:param_name` tokens, a popup opens before execution. It behaves like a normal Neovim buffer — navigate freely, edit values in place.
+
+| Action | Key / Command |
+|---|---|
+| Confirm and run | `:w`, `:wq`, or `<CR>` |
+| Cancel | `<C-c>` or `:q` |
+
+Values are substituted verbatim into the SQL — use SQL syntax directly:
+
+| Type | Example |
+|---|---|
+| String | `'pending'` |
+| Number | `42` |
+| Expression | `SYSDATE` |
+| Escaped quote | `'O''Brien'` |
+
+Values are remembered for the session. Params already set skip the popup on subsequent runs. Use `<leader>db` or `:Dblite binds` to edit stored values at any time.
+
 ## API
 
 All functionality is accessible programmatically:
