@@ -16,5 +16,11 @@ target/
 .env.*
 *.local
 
+# Claude Code local settings
+.claude/
+
+# Local test scratch files
+test.sql
+
 # Compiled native binary (platform-specific; built by mvn -Pnative)
 bin/
