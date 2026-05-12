@@ -34,7 +34,9 @@ local M = {
       cancel  = "<C-c>",  -- kill in-flight query
       inspect = "gi",      -- open inspector for current page
     },
-    editor = {}, -- keymaps for the SQL editor buffer
+    editor = {
+      binds = "<leader>db",  -- open bind parameter editor
+    },
     panel = {    -- keymaps active inside the connections panel
       select = "<CR>", -- activate connection under cursor
       edit   = "cw",   -- edit connection under cursor

@@ -37,6 +37,7 @@ local state = {
   last_elapsed   = nil,
   flash_bufnr    = nil,
   raw_json       = nil,
+  binds          = {},
 }
 
 local function merge_into(target, source)
@@ -51,6 +52,11 @@ end
 
 function M.setup(opts)
   if opts then merge_into(config, opts) end
+  local ek = (config.keymaps and config.keymaps.editor) or {}
+  if ek.binds and ek.binds ~= "" then
+    vim.keymap.set("n", ek.binds, function() M.edit_binds() end,
+      { silent = true, desc = "dblite: edit bind parameters" })
+  end
 end
 
 local function cell(value, width)
@@ -206,6 +212,31 @@ local function set_flash(bufnr, sr, sc, er, ec)
   end
 end
 
+local _saved_cancel_map = nil
+
+local function set_global_cancel_keymap()
+  local existing = vim.fn.maparg("<C-c>", "n", false, true)
+  _saved_cancel_map = (existing and existing.lhs ~= nil) and existing or nil
+  vim.keymap.set("n", "<C-c>", function()
+    if state.current_job then
+      pcall(function() state.current_job:kill(15) end)
+      stop_spinner()
+      clear_flash()
+      if state.result_bufnr and vim.api.nvim_buf_is_valid(state.result_bufnr) then
+        set_status("-- cancelling...")
+      end
+    end
+  end, { desc = "dblite: cancel in-flight query" })
+end
+
+local function clear_global_cancel_keymap()
+  pcall(vim.keymap.del, "n", "<C-c>")
+  if _saved_cancel_map then
+    vim.fn.mapset("n", false, _saved_cancel_map)
+  end
+  _saved_cancel_map = nil
+end
+
 local function configure_result_buffer(bufnr)
   vim.bo[bufnr].buftype = "nofile"
   vim.bo[bufnr].bufhidden = "hide"
@@ -289,6 +320,87 @@ local function ensure_result_buffer()
   return bufnr
 end
 
+local function parse_bind_names(sql)
+  local seen, names = {}, {}
+  local stripped = sql:gsub("'[^']*'", function(s) return string.rep(" ", #s) end)
+  for name in stripped:gmatch(":[a-zA-Z_][a-zA-Z0-9_]*") do
+    local key = name:sub(2)
+    if not seen[key] then seen[key] = true; table.insert(names, key) end
+  end
+  return names
+end
+
+local function apply_binds(sql, binds)
+  local sorted = vim.tbl_keys(binds)
+  table.sort(sorted, function(a, b) return #a > #b end)
+  for _, name in ipairs(sorted) do
+    local val = tostring(binds[name])
+    sql = sql:gsub(":" .. name .. "([^a-zA-Z0-9_])", val .. "%1")
+    if sql:sub(-(#name + 1)) == ":" .. name then
+      sql = sql:sub(1, -(#name + 2)) .. val
+    end
+  end
+  return sql
+end
+
+local function show_bind_popup(params, current_binds, on_confirm)
+  local max_len = 0
+  for _, name in ipairs(params) do
+    if #name > max_len then max_len = #name end
+  end
+
+  local header = "-- Bind parameters  (<CR> confirm · <Esc> cancel)"
+  local lines  = { header }
+  for _, name in ipairs(params) do
+    local val = current_binds[name] or ""
+    table.insert(lines, string.format("%-" .. max_len .. "s : %s", name, val))
+  end
+
+  local width  = math.max(#header + 4, max_len + 24)
+  local height = #lines
+  local row    = math.floor((vim.o.lines   - height) / 2)
+  local col    = math.floor((vim.o.columns - width)  / 2)
+
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.bo[bufnr].buftype   = "nofile"
+  vim.bo[bufnr].bufhidden = "wipe"
+
+  local winnr = vim.api.nvim_open_win(bufnr, true, {
+    relative = "editor", style = "minimal", border = "rounded",
+    width = width, height = height, row = row, col = col,
+  })
+
+  local function confirm()
+    if not vim.api.nvim_win_is_valid(winnr) then return end
+    local result = {}
+    local buf_lines = vim.api.nvim_buf_get_lines(bufnr, 1, -1, false)
+    for i, line in ipairs(buf_lines) do
+      local param = params[i]
+      if param then
+        local val = line:match(":%s*(.-)%s*$") or ""
+        result[param] = val
+      end
+    end
+    vim.api.nvim_win_close(winnr, true)
+    on_confirm(result)
+  end
+
+  local function cancel()
+    if not vim.api.nvim_win_is_valid(winnr) then return end
+    vim.api.nvim_win_close(winnr, true)
+    on_confirm(nil)
+  end
+
+  vim.keymap.set("n", "<CR>",  confirm, { buffer = bufnr, silent = true })
+  vim.keymap.set("n", "<Esc>", cancel,  { buffer = bufnr, silent = true })
+  vim.keymap.set("i", "<CR>",  function() vim.cmd("stopinsert"); confirm() end,
+    { buffer = bufnr, silent = true })
+
+  vim.api.nvim_win_set_cursor(winnr, { 2, max_len + 3 })
+  vim.cmd("startinsert!")
+end
+
 local function expand_env(s)
   if type(s) ~= "string" then return s end
   return (s:gsub("%$([%w_]+)", function(var) return os.getenv(var) or ("$" .. var) end))
@@ -313,10 +425,16 @@ local function execute_core(query)
     state.current_job = nil
   end
 
-  state.last_elapsed = nil
-  state.raw_json     = nil
-  ensure_result_buffer()
-  start_spinner()
+  local bind_names = parse_bind_names(query)
+  local unset = vim.tbl_filter(
+    function(n) return state.binds[n] == nil or state.binds[n] == "" end,
+    bind_names)
+
+  local function do_run(q)
+    state.last_elapsed = nil
+    state.raw_json     = nil
+    ensure_result_buffer()
+    start_spinner()
 
   local cmd = { config.binary }
   if config.max_rows and config.max_rows > 0 then
@@ -331,11 +449,14 @@ local function execute_core(query)
     DB_PASSWORD = expand_env(c.password or ""),
   }
 
+  set_global_cancel_keymap()
+
   local job
-  job = vim.system(cmd, { stdin = query, text = true, env = sys_env }, function(result)
+  job = vim.system(cmd, { stdin = q, text = true, env = sys_env }, function(result)
     vim.schedule(function()
       if state.current_job ~= job then return end
       state.current_job = nil
+      clear_global_cancel_keymap()
       local elapsed = (vim.uv.now() - state.spinner_start) / 1000
       stop_spinner()
       clear_flash()
@@ -374,6 +495,17 @@ local function execute_core(query)
     end)
   end)
   state.current_job = job
+  end -- do_run
+
+  if #bind_names > 0 and #unset > 0 then
+    show_bind_popup(bind_names, state.binds, function(new_binds)
+      if not new_binds then return end
+      for k, v in pairs(new_binds) do state.binds[k] = v end
+      do_run(apply_binds(query, state.binds))
+    end)
+  else
+    do_run(apply_binds(query, state.binds))
+  end
 end
 
 function M.execute()
@@ -741,6 +873,19 @@ function M.inspect(format)
   vim.bo[bufnr].modifiable = false
 end
 
+function M.edit_binds()
+  local names = vim.tbl_keys(state.binds)
+  table.sort(names)
+  if #names == 0 then
+    vim.notify("dblite: no bind parameters set this session", vim.log.levels.INFO)
+    return
+  end
+  show_bind_popup(names, state.binds, function(new_binds)
+    if not new_binds then return end
+    for k, v in pairs(new_binds) do state.binds[k] = v end
+  end)
+end
+
 -- Unified :Dblite <subcommand> entry point
 do
   local dispatch = {
@@ -761,6 +906,7 @@ do
     end,
     build         = function() vim.cmd("DbliteBuild") end,
     inspect       = function(a) M.inspect(a[2]) end,
+    binds         = function() M.edit_binds() end,
   }
 
   local function complete(arg_lead, cmd_line)
@@ -768,7 +914,7 @@ do
     local n = #tokens
     if n == 2 then
       return vim.tbl_filter(function(k) return k:sub(1, #arg_lead) == arg_lead end,
-        { "run", "toggle", "conn", "build", "inspect" })
+        { "run", "toggle", "conn", "build", "inspect", "binds" })
     elseif n == 3 then
       local sub = tokens[2]
       local opts = {
