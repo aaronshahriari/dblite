@@ -112,6 +112,8 @@ Trailing semicolons are stripped automatically — write SQL however feels natur
 | `<C-c>` | Cancel in-flight query |
 | `gi` | Inspect current page (full untruncated output) |
 
+`<C-c>` also works from any buffer while a query is running — dblite temporarily sets it globally and restores your original mapping when the query finishes.
+
 ### Inspect
 
 `gi` (or `:Dblite inspect`) opens the current result page in a scratch window with no column truncation. Three formats are available — tab-complete `:Dblite inspect <tab>` to pick one:
