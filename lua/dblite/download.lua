@@ -89,12 +89,9 @@ local function try_build(root)
   if vim.fn.executable("mvn") ~= 1 then
     return "mvn not found on PATH"
   end
-  if vim.fn.executable("mise") == 1 then
-    vim.system({ "mise", "trust", root }, { cwd = root, text = true }):wait()
-  end
   local r = vim.system(
     { "mvn", "-q", "clean", "package", "-Pnative" },
-    { cwd = root, text = true }
+    { cwd = root, text = true, env = { MISE_TRUSTED_CONFIG_PATHS = root .. "/mise.toml" } }
   ):wait()
   if r.code ~= 0 then
     return "build failed:\n" .. (r.stderr or "")
