@@ -123,12 +123,15 @@ local function render_page()
       value = state.active_conn and state.active_conn.name or "no connection"
     end
     if value then
-      status    = status .. (has_items and (sec.sep or "  ·  ") or "")
-      local col = #status
-      status    = status .. value
-      if sec.hl then
-        table.insert(hl_marks, { col = col, end_col = #status, hl = sec.hl })
+      if has_items then
+        local sep = sec.sep or "  ·  "
+        local sep_col = #status
+        status = status .. sep
+        table.insert(hl_marks, { col = sep_col, end_col = #status, hl = "DbliteStatusPage" })
       end
+      local col = #status
+      status = status .. value
+      table.insert(hl_marks, { col = col, end_col = #status, hl = sec.hl or "DbliteStatusPage" })
       has_items = true
     end
   end
@@ -140,11 +143,8 @@ local function render_page()
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
     vim.bo[bufnr].modifiable = false
     vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
-    if #status > 0 then
-      vim.api.nvim_buf_set_extmark(bufnr, ns, 0, 0, { end_col = #status, hl_group = "DbliteStatusPage" })
-    end
     for _, m in ipairs(hl_marks) do
-      vim.api.nvim_buf_set_extmark(bufnr, ns, 0, m.col, { end_col = m.end_col, hl_group = m.hl, priority = 200 })
+      vim.api.nvim_buf_set_extmark(bufnr, ns, 0, m.col, { end_col = m.end_col, hl_group = m.hl })
     end
     return
   end
@@ -172,11 +172,8 @@ local function render_page()
   vim.bo[bufnr].modifiable = false
 
   vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
-  if #status > 0 then
-    vim.api.nvim_buf_set_extmark(bufnr, ns, 0, 0, { end_col = #status, hl_group = "DbliteStatusPage" })
-  end
   for _, m in ipairs(hl_marks) do
-    vim.api.nvim_buf_set_extmark(bufnr, ns, 0, m.col, { end_col = m.end_col, hl_group = m.hl, priority = 200 })
+    vim.api.nvim_buf_set_extmark(bufnr, ns, 0, m.col, { end_col = m.end_col, hl_group = m.hl })
   end
 end
 
