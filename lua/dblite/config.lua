@@ -24,9 +24,10 @@ local M = {
   panel = {
     width = 30,  -- columns for the side panel
   },
-  binds_popup = {
-    width  = 0.7,  -- fraction of editor columns (0.0–1.0)
-    height = 0.6,  -- fraction of editor lines   (0.0–1.0)
+  binds_split = {
+    split_dir = "vertical",   -- "vertical" | "horizontal"
+    width     = 40,           -- columns; used when split_dir = "vertical". 0 = let nvim decide.
+    height    = 20,           -- rows; used when split_dir = "horizontal". 0 = let nvim decide.
   },
   flash_timeout  = 2000,  -- ms to hold the query highlight before auto-clearing (0 = wait for results)
   json_view      = "tab",  -- where to open the inspector: "tab" | "vertical" | "horizontal" | "float"
