@@ -330,6 +330,10 @@ local function ensure_result_buffer()
       if tab_win_set[w] then visible_in_tab = true; break end
     end
     if not visible_in_tab then
+      -- close dbout windows in other tabs before opening here
+      for _, w in ipairs(wins) do
+        pcall(vim.api.nvim_win_hide, w)
+      end
       vim.cmd(split_cmds[config.split_dir] or split_cmds.vertical)
       vim.api.nvim_win_set_buf(0, bufnr)
       local sz = config.split_size or {}
