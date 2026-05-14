@@ -37,7 +37,6 @@ local state = {
   last_elapsed   = nil,
   flash_bufnr    = nil,
   raw_json       = nil,
-  binds          = {},
 }
 
 local function merge_into(target, source)
@@ -121,6 +120,8 @@ local function render_page()
       if state.last_elapsed then value = string.format("%.3fs", state.last_elapsed) end
     elseif item == "connection" then
       value = state.active_conn and state.active_conn.name or "no connection"
+    elseif item == "binds_file" then
+      if vim.fn.filereadable(binds_file_path()) == 1 then value = "binds" end
     end
     if value then
       if has_items then
@@ -374,7 +375,7 @@ local function apply_binds(sql, binds)
   local sorted = vim.tbl_keys(binds)
   table.sort(sorted, function(a, b) return #a > #b end)
   for _, name in ipairs(sorted) do
-    local val = tostring(binds[name])
+    local val = format_bind_value(binds[name])
     sql = sql:gsub(":" .. name .. "([^a-zA-Z0-9_])", val .. "%1")
     if sql:sub(-(#name + 1)) == ":" .. name then
       sql = sql:sub(1, -(#name + 2)) .. val
@@ -383,112 +384,25 @@ local function apply_binds(sql, binds)
   return sql
 end
 
-vim.api.nvim_set_hl(0, "DbliteBindLabel", { bold = true, default = true })
+local function binds_file_path()
+  return vim.fn.getcwd() .. "/dblite.binds.json"
+end
 
-local function show_bind_popup(params, current_binds, on_confirm)
-  local lines = {}
-  for _, name in ipairs(params) do
-    local val = current_binds[name] or ""
-    table.insert(lines, name .. ": " .. val)
-  end
+local function load_binds_file()
+  local f = io.open(binds_file_path(), "r")
+  if not f then return {} end
+  local raw = f:read("*a"); f:close()
+  if raw == "" then return {} end
+  local ok, data = pcall(vim.json.decode, raw)
+  return (ok and type(data) == "table") and data or {}
+end
 
-  local width  = math.max(60, (function()
-    local m = 0
-    for _, l in ipairs(lines) do if #l > m then m = #l end end
-    return m + 20
-  end)())
-  local height = #params
-  local row    = math.floor((vim.o.lines   - height) / 2)
-  local col    = math.floor((vim.o.columns - width)  / 2)
-
-  local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.bo[bufnr].buftype   = "acwrite"
-  vim.bo[bufnr].bufhidden = "wipe"
-  vim.bo[bufnr].swapfile  = false
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-  vim.bo[bufnr].modified = false
-
-  local ns = vim.api.nvim_create_namespace("dblite_bind_labels")
-  for i, name in ipairs(params) do
-    vim.api.nvim_buf_set_extmark(bufnr, ns, i - 1, 0, {
-      end_col  = #name + 1,
-      hl_group = "DbliteBindLabel",
-    })
-  end
-
-  local winnr = vim.api.nvim_open_win(bufnr, true, {
-    relative  = "editor",
-    style     = "minimal",
-    border    = "rounded",
-    title      = " Bind Parameters ",
-    title_pos  = "center",
-    footer     = " :w confirm  <C-c> cancel ",
-    footer_pos = "center",
-    width     = width,
-    height    = height,
-    row       = row,
-    col       = col,
-  })
-
-  local done = false
-
-  local function confirm()
-    if done then return end
-    done = true
-    local result = {}
-    local buf_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    for i, line in ipairs(buf_lines) do
-      if params[i] then
-        local val = line:match("^[^:]+:%s*(.-)%s*$") or ""
-        result[params[i]] = val
-      end
-    end
-    if vim.api.nvim_win_is_valid(winnr) then
-      vim.api.nvim_win_close(winnr, true)
-    end
-    on_confirm(result)
-  end
-
-  local function cancel()
-    if done then return end
-    done = true
-    if vim.api.nvim_win_is_valid(winnr) then
-      vim.api.nvim_win_close(winnr, true)
-    end
-    on_confirm(nil)
-  end
-
-  -- :w / :wq → confirm
-  vim.api.nvim_create_autocmd("BufWriteCmd", {
-    buffer   = bufnr,
-    callback = function()
-      vim.bo[bufnr].modified = false
-      confirm()
-    end,
-  })
-
-  -- keep buffer "unmodified" so :q never complains about unsaved changes
-  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
-    buffer   = bufnr,
-    callback = function() vim.bo[bufnr].modified = false end,
-  })
-
-  -- closing window without :w cancels
-  vim.api.nvim_create_autocmd("WinClosed", {
-    pattern  = tostring(winnr),
-    once     = true,
-    callback = function() cancel() end,
-  })
-
-  vim.keymap.set("n", "<CR>",  confirm, { buffer = bufnr, silent = true })
-  vim.keymap.set("n", "<C-c>", cancel,  { buffer = bufnr, silent = true })
-  vim.keymap.set("i", "<CR>",  function() vim.cmd("stopinsert"); confirm() end,
-    { buffer = bufnr, silent = true })
-  vim.keymap.set("i", "<C-c>", function() vim.cmd("stopinsert"); cancel() end,
-    { buffer = bufnr, silent = true })
-
-  -- position cursor after the first "name: " in normal mode
-  vim.api.nvim_win_set_cursor(winnr, { 1, #params[1] + 2 })
+-- JSON number → verbatim; "~expr" → raw SQL; string → auto-quoted + escaped
+local function format_bind_value(v)
+  if type(v) == "number" then return tostring(v) end
+  local s = tostring(v)
+  if s:sub(1, 1) == "~" then return s:sub(2) end
+  return "'" .. s:gsub("'", "''") .. "'"
 end
 
 local function expand_env(s)
@@ -516,9 +430,6 @@ local function execute_core(query)
   end
 
   local bind_names = parse_bind_names(query)
-  local unset = vim.tbl_filter(
-    function(n) return state.binds[n] == nil or state.binds[n] == "" end,
-    bind_names)
 
   local function do_run(q)
     state.last_elapsed = nil
@@ -587,14 +498,21 @@ local function execute_core(query)
   state.current_job = job
   end -- do_run
 
-  if #bind_names > 0 and #unset > 0 then
-    show_bind_popup(bind_names, state.binds, function(new_binds)
-      if not new_binds then return end
-      for k, v in pairs(new_binds) do state.binds[k] = v end
-      do_run(apply_binds(query, state.binds))
-    end)
+  if #bind_names > 0 then
+    local file_binds = load_binds_file()
+    local missing = vim.tbl_filter(
+      function(n) return file_binds[n] == nil end, bind_names)
+    if #missing > 0 then
+      vim.notify(
+        "dblite: missing bind params: " .. table.concat(missing, ", ")
+        .. "\nAdd them to dblite.binds.json and re-run.",
+        vim.log.levels.WARN)
+      M.open_binds_file()
+      return
+    end
+    do_run(apply_binds(query, file_binds))
   else
-    do_run(apply_binds(query, state.binds))
+    do_run(query)
   end
 end
 
@@ -988,18 +906,48 @@ function M.inspect(format)
   vim.bo[bufnr].modifiable = false
 end
 
-function M.edit_binds()
-  local names = vim.tbl_keys(state.binds)
-  table.sort(names)
-  if #names == 0 then
-    vim.notify("dblite: no bind parameters set this session", vim.log.levels.INFO)
-    return
+function M.open_binds_file()
+  local path = binds_file_path()
+  if vim.fn.filereadable(path) == 0 then
+    vim.fn.writefile({ "{", "}" }, path)
+    vim.notify("dblite: created " .. path, vim.log.levels.INFO)
   end
-  show_bind_popup(names, state.binds, function(new_binds)
-    if not new_binds then return end
-    for k, v in pairs(new_binds) do state.binds[k] = v end
-  end)
+
+  local popup_cfg = config.binds_popup or {}
+  local width  = math.max(40, math.floor(vim.o.columns * (popup_cfg.width  or 0.7)))
+  local height = math.max(10, math.floor(vim.o.lines   * (popup_cfg.height or 0.6)))
+  local row    = math.floor((vim.o.lines   - height) / 2)
+  local col    = math.floor((vim.o.columns - width)  / 2)
+
+  local bufnr = vim.fn.bufnr(vim.fn.fnamemodify(path, ":p"), true)
+  if vim.fn.bufloaded(bufnr) == 0 then vim.fn.bufload(bufnr) end
+  vim.bo[bufnr].filetype = "json"
+
+  local winnr = vim.api.nvim_open_win(bufnr, true, {
+    relative   = "editor",
+    border     = "rounded",
+    title      = " dblite.binds.json ",
+    title_pos  = "center",
+    footer     = " :w save  q close ",
+    footer_pos = "center",
+    width      = width,
+    height     = height,
+    row        = row,
+    col        = col,
+  })
+
+  vim.wo[winnr].number         = false
+  vim.wo[winnr].relativenumber = false
+  vim.wo[winnr].cursorline     = true
+
+  vim.keymap.set("n", "q", function()
+    if vim.api.nvim_win_is_valid(winnr) then
+      vim.api.nvim_win_close(winnr, false)
+    end
+  end, { buffer = bufnr, silent = true, nowait = true })
 end
+
+M.edit_binds = M.open_binds_file
 
 -- Unified :Dblite <subcommand> entry point
 do

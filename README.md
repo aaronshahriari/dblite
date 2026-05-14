@@ -148,23 +148,62 @@ The scratch window opens according to `json_view` (default `"tab"`). Press `q` t
 
 ### Bind Parameters
 
-When a query contains `:param_name` tokens, a popup opens before execution. It behaves like a normal Neovim buffer — navigate freely, edit values in place.
+Bind params use a `dblite.binds.json` file in the current working directory. Create one with `:Dblite binds` or `<leader>b`.
 
-| Action | Key / Command |
-|---|---|
-| Confirm and run | `:w`, `:wq`, or `<CR>` |
-| Cancel | `<C-c>` or `:q` |
+#### File format
 
-Values are substituted verbatim into the SQL — use SQL syntax directly:
+```json
+{
+  "status": "pending",
+  "user_id": 42,
+  "name": "O'Brien",
+  "dt": "~SYSDATE"
+}
+```
 
-| Type | Example |
-|---|---|
-| String | `'pending'` |
-| Number | `42` |
-| Expression | `SYSDATE` |
-| Escaped quote | `'O''Brien'` |
+Values are typed — dblite formats them for SQL automatically:
 
-Values are remembered for the session. Params already set skip the popup on subsequent runs. Use `<leader>db` or `:Dblite binds` to edit stored values at any time.
+| JSON / prefix | SQL output | Notes |
+|---|---|---|
+| JSON number | verbatim | `42` → `42` |
+| String | auto SQL-quoted, single-quotes escaped | `"O'Brien"` → `'O''Brien'` |
+| String starting with `~` | raw SQL expression (strip `~`) | `"~SYSDATE"` → `SYSDATE` |
+
+#### Workflow
+
+- **Run a query** — if all params are in `dblite.binds.json`, query runs immediately. If any are missing, the file opens so you can add them; re-run after saving.
+- **Edit binds** — `<leader>b` or `:Dblite binds` opens `dblite.binds.json` in a floating window. `:w` saves, `q` closes.
+- **Change values** — edit `dblite.binds.json` directly; the file is re-read on every query execution.
+
+#### Popup size
+
+The floating window defaults to 70 % of editor width × 60 % of editor height. Override in setup:
+
+```lua
+require('dblite').setup({
+  binds_popup = {
+    width  = 0.8,  -- fraction of editor columns
+    height = 0.5,  -- fraction of editor lines
+  },
+})
+```
+
+#### Status line indicator
+
+Add `"binds_file"` to your `style.dbout.sections` to show a `binds` badge when `dblite.binds.json` exists in the cwd:
+
+```lua
+style = {
+  dbout = {
+    sections = {
+      { "pagination" },
+      { "query_time", sep = "  —  " },
+      { "connection", sep = "  ·  " },
+      { "binds_file", sep = "  ·  ", hl = "Comment" },
+    },
+  },
+},
+```
 
 ## API
 
@@ -177,7 +216,8 @@ db.execute()              -- run the current buffer as a SQL query
 db.execute_at_cursor()    -- run the statement under the cursor
 db.toggle_dbout()         -- show/hide the result window
 db.inspect(format)        -- open current page in scratch window ('json'|'table'|'csv')
-db.edit_binds()           -- open the bind parameter popup (view/edit session binds)
+db.open_binds_file()      -- open dblite.binds.json in a floating window
+db.edit_binds()           -- alias for open_binds_file()
 db.toggle_panel()         -- open/close the connections panel
 db.open_panel()           -- open the panel
 db.close_panel()          -- close the panel
@@ -210,6 +250,10 @@ require('dblite').setup({
   panel = {
     width = 30,                   -- side panel width in columns
   },
+  binds_popup = {
+    width  = 0.7,                 -- fraction of editor columns (0.0–1.0)
+    height = 0.6,                 -- fraction of editor lines   (0.0–1.0)
+  },
   style = {
     dbout = {
       cursorline = false,   -- highlight the line under the cursor
@@ -230,6 +274,9 @@ require('dblite').setup({
       prev    = 'H',              -- previous page
       cancel  = '<C-c>',          -- cancel in-flight query
       inspect = 'gi',             -- open inspector for current page
+    },
+    editor = {
+      binds = '<leader>b',        -- open dblite.binds.json popup
     },
     panel = { select = '<CR>', edit = 'cw', close = 'q' },
   },

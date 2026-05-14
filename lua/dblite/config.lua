@@ -24,6 +24,10 @@ local M = {
   panel = {
     width = 30,  -- columns for the side panel
   },
+  binds_popup = {
+    width  = 0.7,  -- fraction of editor columns (0.0–1.0)
+    height = 0.6,  -- fraction of editor lines   (0.0–1.0)
+  },
   flash_timeout  = 2000,  -- ms to hold the query highlight before auto-clearing (0 = wait for results)
   json_view      = "tab",  -- where to open the inspector: "tab" | "vertical" | "horizontal" | "float"
   inspect_format = "json", -- default inspect format: "json" | "table" | "csv"
@@ -31,7 +35,7 @@ local M = {
     dbout = {
       cursorline = false, -- highlight the line under the cursor in dbout
       -- Each section: { "item", sep = "separator_before", hl = "HlGroup" }
-      -- Items: "pagination" | "query_time" | "connection"
+      -- Items: "pagination" | "query_time" | "connection" | "binds_file"
       -- sep defaults to "  ·  " for non-first visible items
       sections = {
         { "pagination" },
@@ -48,7 +52,7 @@ local M = {
       inspect = "gi",      -- open inspector for current page
     },
     editor = {
-      binds = "<leader>db",  -- open bind parameter editor
+      binds = "<leader>b",  -- open dblite.binds.json popup
     },
     panel = {    -- keymaps active inside the connections panel
       select = "<CR>", -- activate connection under cursor
