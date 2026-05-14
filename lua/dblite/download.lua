@@ -33,7 +33,7 @@ local function detect_platform()
   return arch .. "-" .. os_name
 end
 
-local REPO = "aaronshahriari/dblite"
+local REPO = "aaronshahriari/dblite.nvim"
 
 local function latest_release_tag()
   local r = vim.system({
@@ -88,6 +88,9 @@ end
 local function try_build(root)
   if vim.fn.executable("mvn") ~= 1 then
     return "mvn not found on PATH"
+  end
+  if vim.fn.executable("mise") == 1 then
+    vim.system({ "mise", "trust", root }, { cwd = root, text = true }):wait()
   end
   local r = vim.system(
     { "mvn", "-q", "clean", "package", "-Pnative" },

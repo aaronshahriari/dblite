@@ -21,7 +21,7 @@ vim.api.nvim_create_autocmd('PackChanged', {
 })
 
 vim.pack.add({
-  { src = 'https://github.com/aaronshahriari/dblite' },
+  { src = 'https://github.com/aaronshahriari/dblite.nvim' },
 })
 
 require('dblite').setup()
@@ -35,7 +35,7 @@ The plugin ships a `build.lua` that lazy.nvim picks up automatically, so no `bui
 
 ```lua
 {
-  'aaronshahriari/dblite',
+  'aaronshahriari/dblite.nvim',
   config = function()
     require('dblite').setup()
   end,
@@ -45,19 +45,19 @@ The plugin ships a `build.lua` that lazy.nvim picks up automatically, so no `bui
 ### vim-plug
 
 ```vim
-Plug 'aaronshahriari/dblite', { 'do': ':DbliteBuild' }
+Plug 'aaronshahriari/dblite.nvim', { 'do': ':DbliteBuild' }
 ```
 
 ### packer.nvim
 
 ```lua
-use { 'aaronshahriari/dblite', run = ':DbliteBuild' }
+use { 'aaronshahriari/dblite.nvim', run = ':DbliteBuild' }
 ```
 
 ### Manual
 
 ```sh
-git clone https://github.com/aaronshahriari/dblite
+git clone https://github.com/aaronshahriari/dblite.nvim
 ```
 
 Add the directory to `runtimepath`, call `require('dblite').setup()`, and run `:DbliteBuild`.
