@@ -27,6 +27,15 @@ local M = {
   flash_timeout  = 2000,  -- ms to hold the query highlight before auto-clearing (0 = wait for results)
   json_view      = "tab",  -- where to open the inspector: "tab" | "vertical" | "horizontal" | "float"
   inspect_format = "json", -- default inspect format: "json" | "table" | "csv"
+  style = {
+    dbout = {
+      cursorline = false,   -- highlight the line under the cursor in dbout
+      pagination = true,    -- show (page/total) in the status line
+      query_time = true,    -- show elapsed query time in the status line
+      connection = true,    -- show active connection name in the status line
+      delimiter  = "  ·  ", -- separator between status line segments
+    },
+  },
   keymaps = {
     dbout = {  -- keymaps active inside the result/output buffer
       next    = "L",       -- next page (set to "" or false to disable)

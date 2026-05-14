@@ -190,6 +190,15 @@ require('dblite').setup({
   panel = {
     width = 30,                   -- side panel width in columns
   },
+  style = {
+    dbout = {
+      cursorline = false,         -- highlight the line under the cursor
+      pagination = true,          -- show (page/total) in the status line
+      query_time = true,          -- show elapsed query time in the status line
+      connection = true,          -- show active connection name in the status line
+      delimiter  = '  ·  ',       -- separator between status line segments
+    },
+  },
   keymaps = {
     dbout = {
       next    = 'L',              -- next page

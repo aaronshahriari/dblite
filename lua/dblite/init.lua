@@ -102,13 +102,23 @@ local function render_page()
   local end_row = math.min(start_row + page_size - 1, total)
 
   local lines = {}
-  local base = total == 0
-    and "(no rows)"
-    or string.format("(%d/%d)", state.page, total_pages)
-  local conn_name = state.active_conn and state.active_conn.name or "no connection"
-  local status = state.last_elapsed
-    and (base .. string.format("  —  %.3fs  ·  %s", state.last_elapsed, conn_name))
-    or  (base .. "  ·  " .. conn_name)
+  local dbout_style = (config.style and config.style.dbout) or {}
+  local delim = dbout_style.delimiter ~= nil and dbout_style.delimiter or "  ·  "
+
+  local segments = {}
+  if dbout_style.pagination ~= false then
+    table.insert(segments, total == 0
+      and "(no rows)"
+      or string.format("(%d/%d)", state.page, total_pages))
+  end
+  if dbout_style.query_time ~= false and state.last_elapsed then
+    table.insert(segments, string.format("%.3fs", state.last_elapsed))
+  end
+  if dbout_style.connection ~= false then
+    table.insert(segments, state.active_conn and state.active_conn.name or "no connection")
+  end
+
+  local status = table.concat(segments, delim)
   table.insert(lines, status)
   table.insert(lines, "")
 
@@ -287,6 +297,11 @@ local function configure_result_buffer(bufnr)
   })
 end
 
+local function apply_dbout_win_style(winnr)
+  local st = (config.style and config.style.dbout) or {}
+  vim.wo[winnr].cursorline = st.cursorline == true
+end
+
 local function ensure_result_buffer()
   if state.result_bufnr and vim.api.nvim_buf_is_valid(state.result_bufnr) then
     local bufnr = state.result_bufnr
@@ -300,6 +315,7 @@ local function ensure_result_buffer()
       elseif config.split_dir == "horizontal" and sz.height and sz.height > 0 then
         vim.api.nvim_win_set_height(0, sz.height)
       end
+      apply_dbout_win_style(0)
       vim.cmd("wincmd p")
     end
     return bufnr
@@ -316,6 +332,7 @@ local function ensure_result_buffer()
     vim.api.nvim_win_set_height(0, sz.height)
   end
 
+  apply_dbout_win_style(0)
   vim.cmd("wincmd p")
   state.result_bufnr = bufnr
   return bufnr
@@ -779,6 +796,7 @@ function M.toggle_dbout()
     elseif config.split_dir == "horizontal" and sz.height and sz.height > 0 then
       vim.api.nvim_win_set_height(0, sz.height)
     end
+    apply_dbout_win_style(0)
     vim.cmd("wincmd p")
   end
 end
