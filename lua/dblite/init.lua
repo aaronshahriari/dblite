@@ -365,6 +365,27 @@ local function ensure_result_buffer()
   return bufnr
 end
 
+local function binds_file_path()
+  return vim.fn.getcwd() .. "/dblite.binds.json"
+end
+
+local function load_binds_file()
+  local f = io.open(binds_file_path(), "r")
+  if not f then return {} end
+  local raw = f:read("*a"); f:close()
+  if raw == "" then return {} end
+  local ok, data = pcall(vim.json.decode, raw)
+  return (ok and type(data) == "table") and data or {}
+end
+
+-- JSON number → verbatim; "~expr" → raw SQL; string → auto-quoted + escaped
+local function format_bind_value(v)
+  if type(v) == "number" then return tostring(v) end
+  local s = tostring(v)
+  if s:sub(1, 1) == "~" then return s:sub(2) end
+  return "'" .. s:gsub("'", "''") .. "'"
+end
+
 local function parse_bind_names(sql)
   local seen, names = {}, {}
   local stripped = sql:gsub("'[^']*'", function(s) return string.rep(" ", #s) end)
@@ -386,27 +407,6 @@ local function apply_binds(sql, binds)
     end
   end
   return sql
-end
-
-local function binds_file_path()
-  return vim.fn.getcwd() .. "/dblite.binds.json"
-end
-
-local function load_binds_file()
-  local f = io.open(binds_file_path(), "r")
-  if not f then return {} end
-  local raw = f:read("*a"); f:close()
-  if raw == "" then return {} end
-  local ok, data = pcall(vim.json.decode, raw)
-  return (ok and type(data) == "table") and data or {}
-end
-
--- JSON number → verbatim; "~expr" → raw SQL; string → auto-quoted + escaped
-local function format_bind_value(v)
-  if type(v) == "number" then return tostring(v) end
-  local s = tostring(v)
-  if s:sub(1, 1) == "~" then return s:sub(2) end
-  return "'" .. s:gsub("'", "''") .. "'"
 end
 
 local function expand_env(s)
