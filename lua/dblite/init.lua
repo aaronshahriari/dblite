@@ -105,9 +105,10 @@ local function render_page()
   local base = total == 0
     and "(no rows)"
     or string.format("(%d/%d)", state.page, total_pages)
+  local conn_name = state.active_conn and state.active_conn.name or "no connection"
   local status = state.last_elapsed
-    and (base .. string.format("  —  %.3fs", state.last_elapsed))
-    or base
+    and (base .. string.format("  —  %.3fs  ·  %s", state.last_elapsed, conn_name))
+    or  (base .. "  ·  " .. conn_name)
   table.insert(lines, status)
   table.insert(lines, "")
 
