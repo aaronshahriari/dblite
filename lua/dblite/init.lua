@@ -56,6 +56,10 @@ function M.setup(opts)
     vim.keymap.set("n", ek.binds, function() M.edit_binds() end,
       { silent = true, desc = "dblite: edit bind parameters" })
   end
+  if ek.connections and ek.connections ~= "" then
+    vim.keymap.set("n", ek.connections, function() M.edit_connections_file() end,
+      { silent = true, desc = "dblite: edit connections file" })
+  end
 end
 
 local function cell(value, width)
@@ -511,7 +515,7 @@ local function execute_core(query)
         "dblite: missing bind params: " .. table.concat(missing, ", ")
         .. "\nAdd them to dblite.binds.json and re-run.",
         vim.log.levels.WARN)
-      M.open_binds_file()
+      M.open_binds()
       return
     end
     do_run(apply_binds(query, file_binds))
@@ -910,48 +914,79 @@ function M.inspect(format)
   vim.bo[bufnr].modifiable = false
 end
 
-function M.open_binds_file()
+local _binds_win = nil
+
+local function ensure_binds_file()
   local path = binds_file_path()
   if vim.fn.filereadable(path) == 0 then
     vim.fn.writefile({ "{", "}" }, path)
     vim.notify("dblite: created " .. path, vim.log.levels.INFO)
   end
-
-  local popup_cfg = config.binds_popup or {}
-  local width  = math.max(40, math.floor(vim.o.columns * (popup_cfg.width  or 0.7)))
-  local height = math.max(10, math.floor(vim.o.lines   * (popup_cfg.height or 0.6)))
-  local row    = math.floor((vim.o.lines   - height) / 2)
-  local col    = math.floor((vim.o.columns - width)  / 2)
-
-  local bufnr = vim.fn.bufnr(vim.fn.fnamemodify(path, ":p"), true)
-  if vim.fn.bufloaded(bufnr) == 0 then vim.fn.bufload(bufnr) end
-  vim.bo[bufnr].filetype = "json"
-
-  local winnr = vim.api.nvim_open_win(bufnr, true, {
-    relative   = "editor",
-    border     = "rounded",
-    title      = " dblite.binds.json ",
-    title_pos  = "center",
-    footer     = " :w save  q close ",
-    footer_pos = "center",
-    width      = width,
-    height     = height,
-    row        = row,
-    col        = col,
-  })
-
-  vim.wo[winnr].number         = false
-  vim.wo[winnr].relativenumber = false
-  vim.wo[winnr].cursorline     = true
-
-  vim.keymap.set("n", "q", function()
-    if vim.api.nvim_win_is_valid(winnr) then
-      vim.api.nvim_win_close(winnr, false)
-    end
-  end, { buffer = bufnr, silent = true, nowait = true })
+  return path
 end
 
-M.edit_binds = M.open_binds_file
+local function open_binds_split()
+  local path = ensure_binds_file()
+  local split_cfg = config.binds_split or {}
+  local dir  = split_cfg.split_dir or "vertical"
+  local size = ""
+  if dir == "vertical" then
+    local w = split_cfg.width or 40
+    if w > 0 then size = tostring(w) end
+    vim.cmd(size .. "vsplit " .. vim.fn.fnameescape(path))
+  else
+    local h = split_cfg.height or 20
+    if h > 0 then size = tostring(h) end
+    vim.cmd(size .. "split " .. vim.fn.fnameescape(path))
+  end
+  _binds_win = vim.api.nvim_get_current_win()
+  vim.api.nvim_create_autocmd("WinClosed", {
+    pattern  = tostring(_binds_win),
+    once     = true,
+    callback = function() _binds_win = nil end,
+  })
+end
+
+function M.open_binds()
+  if _binds_win and vim.api.nvim_win_is_valid(_binds_win) then
+    vim.api.nvim_set_current_win(_binds_win)
+  else
+    open_binds_split()
+  end
+end
+
+function M.toggle_binds()
+  if _binds_win and vim.api.nvim_win_is_valid(_binds_win) then
+    vim.api.nvim_win_close(_binds_win, false)
+    _binds_win = nil
+  else
+    open_binds_split()
+  end
+end
+
+M.open_binds_file = M.toggle_binds
+M.edit_binds      = M.toggle_binds
+
+function M.edit_connections_file()
+  local path = vim.fn.stdpath("data") .. "/dblite/connections.json"
+  if vim.fn.filereadable(path) ~= 1 then
+    vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
+    local f = io.open(path, "w")
+    if f then f:write("[]") f:close() end
+  end
+  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  vim.api.nvim_create_autocmd("BufWritePost", {
+    buffer   = vim.api.nvim_get_current_buf(),
+    once     = true,
+    callback = function()
+      panel.refresh()
+      if state.active_conn then
+        local updated = connections.get(state.active_conn.id)
+        if updated then state.active_conn = updated end
+      end
+    end,
+  })
+end
 
 -- Unified :Dblite <subcommand> entry point
 do
@@ -969,7 +1004,8 @@ do
       elseif sub == "use"  then vim.cmd("DbliteUseConn "  .. (a[3] or ""))
       elseif sub == "edit" then vim.cmd("DbliteEditConn " .. (a[3] or ""))
       elseif sub == "del"  then vim.cmd("DbliteDeleteConn " .. (a[3] or ""))
-      else vim.notify("dblite: conn what? (add | list | use | edit | del)", vim.log.levels.ERROR) end
+      elseif sub == "file" then M.edit_connections_file()
+      else vim.notify("dblite: conn what? (add | list | use | edit | del | file)", vim.log.levels.ERROR) end
     end,
     build         = function() vim.cmd("DbliteBuild") end,
     inspect       = function(a) M.inspect(a[2]) end,
@@ -987,7 +1023,7 @@ do
       local opts = {
         run     = { "at" },
         toggle  = { "panel", "dbout" },
-        conn    = { "add", "list", "use", "edit", "del" },
+        conn    = { "add", "list", "use", "edit", "del", "file" },
         inspect = { "json", "table", "csv" },
       }
       local choices = opts[sub] or {}

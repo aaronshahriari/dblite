@@ -75,6 +75,7 @@ Supported database types: **Oracle** and **SQL Server**.
 | `:DbliteUseConn <name>` | Set the active connection for queries. |
 | `:DbliteEditConn <name>` | Edit a saved connection. |
 | `:DbliteDeleteConn <name>` | Delete a connection. |
+| `:Dblite conn file` | Open the raw connections JSON for direct editing. |
 
 All commands that accept a name support tab-completion.
 
@@ -175,15 +176,16 @@ Values are typed — dblite formats them for SQL automatically:
 - **Edit binds** — `<leader>b` or `:Dblite binds` opens `dblite.binds.json` in a floating window. `:w` saves, `q` closes.
 - **Change values** — edit `dblite.binds.json` directly; the file is re-read on every query execution.
 
-#### Popup size
+#### Split size
 
-The floating window defaults to 70 % of editor width × 60 % of editor height. Override in setup:
+The binds split defaults to a 40-column vertical split. Override in setup:
 
 ```lua
 require('dblite').setup({
-  binds_popup = {
-    width  = 0.8,  -- fraction of editor columns
-    height = 0.5,  -- fraction of editor lines
+  binds_split = {
+    split_dir = 'vertical',  -- 'vertical' | 'horizontal'
+    width     = 50,          -- columns (vertical); 0 = let nvim decide
+    height    = 20,          -- rows (horizontal); 0 = let nvim decide
   },
 })
 ```
@@ -216,8 +218,10 @@ db.execute()              -- run the current buffer as a SQL query
 db.execute_at_cursor()    -- run the statement under the cursor
 db.toggle_dbout()         -- show/hide the result window
 db.inspect(format)        -- open current page in scratch window ('json'|'table'|'csv')
-db.open_binds_file()      -- open dblite.binds.json in a floating window
-db.edit_binds()           -- alias for open_binds_file()
+db.toggle_binds()         -- toggle dblite.binds.json split open/closed
+db.open_binds()           -- open/focus the binds split (does not close)
+db.edit_binds()           -- alias for toggle_binds()
+db.edit_connections_file() -- open connections JSON for direct editing
 db.toggle_panel()         -- open/close the connections panel
 db.open_panel()           -- open the panel
 db.close_panel()          -- close the panel
@@ -228,10 +232,23 @@ Example keymap setup:
 
 ```lua
 local db = require('dblite')
-vim.keymap.set('n', '<leader>dr', db.execute,           { desc = 'dblite: run query' })
-vim.keymap.set('n', '<leader>de', db.execute_at_cursor, { desc = 'dblite: run at cursor' })
-vim.keymap.set('n', '<leader>dp', db.toggle_panel,      { desc = 'dblite: toggle panel' })
-vim.keymap.set('n', '<leader>do', db.toggle_dbout,      { desc = 'dblite: toggle dbout' })
+vim.keymap.set('n', '<leader>dr', db.execute,                { desc = 'dblite: run query' })
+vim.keymap.set('n', '<leader>de', db.execute_at_cursor,      { desc = 'dblite: run at cursor' })
+vim.keymap.set('n', '<leader>dp', db.toggle_panel,           { desc = 'dblite: toggle panel' })
+vim.keymap.set('n', '<leader>do', db.toggle_dbout,           { desc = 'dblite: toggle dbout' })
+vim.keymap.set('n', '<leader>dc', db.edit_connections_file,  { desc = 'dblite: edit connections' })
+```
+
+Or bind it via setup with `keymaps.editor.connections`:
+
+```lua
+require('dblite').setup({
+  keymaps = {
+    editor = {
+      connections = '<leader>dc',
+    },
+  },
+})
 ```
 
 ## Configuration
@@ -250,9 +267,10 @@ require('dblite').setup({
   panel = {
     width = 30,                   -- side panel width in columns
   },
-  binds_popup = {
-    width  = 0.7,                 -- fraction of editor columns (0.0–1.0)
-    height = 0.6,                 -- fraction of editor lines   (0.0–1.0)
+  binds_split = {
+    split_dir = 'vertical',       -- 'vertical' | 'horizontal'
+    width     = 40,               -- columns; used when split_dir = 'vertical'. 0 = let nvim decide.
+    height    = 20,               -- rows; used when split_dir = 'horizontal'. 0 = let nvim decide.
   },
   style = {
     dbout = {
@@ -276,7 +294,7 @@ require('dblite').setup({
       inspect = 'gi',             -- open inspector for current page
     },
     editor = {
-      binds = '<leader>b',        -- open dblite.binds.json popup
+      binds = '<leader>b',        -- toggle dblite.binds.json split
     },
     panel = { select = '<CR>', edit = 'cw', close = 'q' },
   },
