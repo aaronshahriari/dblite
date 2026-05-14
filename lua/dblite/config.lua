@@ -29,11 +29,15 @@ local M = {
   inspect_format = "json", -- default inspect format: "json" | "table" | "csv"
   style = {
     dbout = {
-      cursorline = false,   -- highlight the line under the cursor in dbout
-      pagination = true,    -- show (page/total) in the status line
-      query_time = true,    -- show elapsed query time in the status line
-      connection = true,    -- show active connection name in the status line
-      delimiter  = "  ·  ", -- separator between status line segments
+      cursorline = false, -- highlight the line under the cursor in dbout
+      -- Each section: { "item", sep = "separator_before", hl = "HlGroup" }
+      -- Items: "pagination" | "query_time" | "connection"
+      -- sep defaults to "  ·  " for non-first visible items
+      sections = {
+        { "pagination" },
+        { "query_time", sep = "  —  " },
+        { "connection", sep = "  ·  " },
+      },
     },
   },
   keymaps = {

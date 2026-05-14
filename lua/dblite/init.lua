@@ -103,22 +103,35 @@ local function render_page()
 
   local lines = {}
   local dbout_style = (config.style and config.style.dbout) or {}
-  local delim = dbout_style.delimiter ~= nil and dbout_style.delimiter or "  ·  "
+  local sections = dbout_style.sections or {
+    { "pagination" },
+    { "query_time", sep = "  —  " },
+    { "connection", sep = "  ·  " },
+  }
 
-  local segments = {}
-  if dbout_style.pagination ~= false then
-    table.insert(segments, total == 0
-      and "(no rows)"
-      or string.format("(%d/%d)", state.page, total_pages))
+  local status    = ""
+  local hl_marks  = {}
+  local has_items = false
+  for _, sec in ipairs(sections) do
+    local item = sec[1]
+    local value
+    if item == "pagination" then
+      value = total == 0 and "(no rows)" or string.format("(%d/%d)", state.page, total_pages)
+    elseif item == "query_time" then
+      if state.last_elapsed then value = string.format("%.3fs", state.last_elapsed) end
+    elseif item == "connection" then
+      value = state.active_conn and state.active_conn.name or "no connection"
+    end
+    if value then
+      status    = status .. (has_items and (sec.sep or "  ·  ") or "")
+      local col = #status
+      status    = status .. value
+      if sec.hl then
+        table.insert(hl_marks, { col = col, end_col = #status, hl = sec.hl })
+      end
+      has_items = true
+    end
   end
-  if dbout_style.query_time ~= false and state.last_elapsed then
-    table.insert(segments, string.format("%.3fs", state.last_elapsed))
-  end
-  if dbout_style.connection ~= false then
-    table.insert(segments, state.active_conn and state.active_conn.name or "no connection")
-  end
-
-  local status = table.concat(segments, delim)
   table.insert(lines, status)
   table.insert(lines, "")
 
@@ -127,10 +140,12 @@ local function render_page()
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
     vim.bo[bufnr].modifiable = false
     vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
-    vim.api.nvim_buf_set_extmark(bufnr, ns, 0, 0, {
-      end_col = #status,
-      hl_group = "DbliteStatusPage",
-    })
+    if #status > 0 then
+      vim.api.nvim_buf_set_extmark(bufnr, ns, 0, 0, { end_col = #status, hl_group = "DbliteStatusPage" })
+    end
+    for _, m in ipairs(hl_marks) do
+      vim.api.nvim_buf_set_extmark(bufnr, ns, 0, m.col, { end_col = m.end_col, hl_group = m.hl, priority = 200 })
+    end
     return
   end
 
@@ -157,10 +172,12 @@ local function render_page()
   vim.bo[bufnr].modifiable = false
 
   vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
-  vim.api.nvim_buf_set_extmark(bufnr, ns, 0, 0, {
-    end_col = #status,
-    hl_group = "DbliteStatusPage",
-  })
+  if #status > 0 then
+    vim.api.nvim_buf_set_extmark(bufnr, ns, 0, 0, { end_col = #status, hl_group = "DbliteStatusPage" })
+  end
+  for _, m in ipairs(hl_marks) do
+    vim.api.nvim_buf_set_extmark(bufnr, ns, 0, m.col, { end_col = m.end_col, hl_group = m.hl, priority = 200 })
+  end
 end
 
 local function set_status(text)

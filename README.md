@@ -192,11 +192,16 @@ require('dblite').setup({
   },
   style = {
     dbout = {
-      cursorline = false,         -- highlight the line under the cursor
-      pagination = true,          -- show (page/total) in the status line
-      query_time = true,          -- show elapsed query time in the status line
-      connection = true,          -- show active connection name in the status line
-      delimiter  = '  ·  ',       -- separator between status line segments
+      cursorline = false,   -- highlight the line under the cursor
+      -- Status line sections. Each entry: { "item", sep = "…", hl = "HlGroup" }
+      -- Available items: "pagination" | "query_time" | "connection"
+      -- sep   — separator printed before this item (default "  ·  ")
+      -- hl    — highlight group applied to this item's text (optional)
+      sections = {
+        { "pagination" },
+        { "query_time", sep = "  —  " },
+        { "connection", sep = "  ·  " },
+      },
     },
   },
   keymaps = {
