@@ -649,13 +649,22 @@ local function edit_conn_by_name(name)
     return v ~= "" and v or current
   end
 
+  local default_port = conn.type == "sqlserver" and 1433 or 1521
+  local db_label     = conn.type == "sqlserver" and "Database" or "Service"
+  local db_current   = conn.type == "sqlserver" and conn.database or conn.service
+  local db_val       = prompt(db_label, db_current or "")
+
   local updates = {
-    name    = prompt("Name",    conn.name),
-    host    = prompt("Host",    conn.host),
-    port    = tonumber(prompt("Port", conn.port or 1521)),
-    service = prompt("Service", conn.service),
-    user    = prompt("User",    conn.user),
+    name = prompt("Name", conn.name),
+    host = prompt("Host", conn.host),
+    port = tonumber(prompt("Port", conn.port or default_port)),
+    user = prompt("User", conn.user),
   }
+  if conn.type == "sqlserver" then
+    updates.database = db_val
+  else
+    updates.service = db_val
+  end
   local pw = vim.fn.inputsecret("Password (leave blank to keep): ")
   if pw ~= "" then updates.password = pw end
 
@@ -677,7 +686,7 @@ panel.setup({
 })
 
 -- :DbliteAddConn — interactive; optionally accepts a URI as first argument
--- URI format: oracle://user[:password]@host[:port]/service
+-- URI format: oracle://user[:pass]@host[:port]/service  OR  sqlserver://user[:pass]@host[:port]/database
 vim.api.nvim_create_user_command("DbliteAddConn", function(opts)
   local fields
 
@@ -690,7 +699,7 @@ vim.api.nvim_create_user_command("DbliteAddConn", function(opts)
     fields = parsed
   else
     -- Ask for URI first; blank means fall through to field-by-field
-    local uri_input = vim.fn.input("URI (oracle://user:pass@host:port/service) or blank for manual: ")
+    local uri_input = vim.fn.input("URI (oracle://... or sqlserver://...) or blank for manual: ")
     if uri_input ~= "" then
       local parsed, err = connections.parse_uri(uri_input)
       if not parsed then
@@ -705,21 +714,34 @@ vim.api.nvim_create_user_command("DbliteAddConn", function(opts)
   if name == "" then return end
 
   if not fields then
-    local host     = vim.fn.input("Host: ")
+    local type_s = vim.fn.input("Type [oracle/sqlserver]: ")
+    type_s = type_s ~= "" and type_s or "oracle"
+    if type_s ~= "oracle" and type_s ~= "sqlserver" then
+      vim.notify("\ndblite: type must be 'oracle' or 'sqlserver'", vim.log.levels.ERROR)
+      return
+    end
+    local default_port = type_s == "sqlserver" and "1433" or "1521"
+    local host = vim.fn.input("Host: ")
     if host == "" then return end
-    local port_s   = vim.fn.input("Port [1521]: ")
-    local service  = vim.fn.input("Service: ")
-    if service == "" then return end
+    local port_s   = vim.fn.input("Port [" .. default_port .. "]: ")
+    local db_label = type_s == "sqlserver" and "Database" or "Service"
+    local db_val   = vim.fn.input(db_label .. ": ")
+    if db_val == "" then return end
     local user     = vim.fn.input("User: ")
     if user == "" then return end
     local password = vim.fn.inputsecret("Password (or $ENV_VAR): ")
     fields = {
+      type     = type_s,
       host     = host,
-      port     = tonumber(port_s ~= "" and port_s or "1521") or 1521,
-      service  = service,
+      port     = tonumber(port_s ~= "" and port_s or default_port),
       user     = user,
       password = password,
     }
+    if type_s == "sqlserver" then
+      fields.database = db_val
+    else
+      fields.service = db_val
+    end
   else
     -- URI path: password may be missing — give the user a chance to set it
     if (fields.password or "") == "" then
@@ -746,10 +768,12 @@ vim.api.nvim_create_user_command("DbliteListConns", function()
   end
   local lines = { "dblite connections:" }
   for _, c in ipairs(conns) do
-    local active = (state.active_conn and state.active_conn.id == c.id) and " *" or ""
+    local active  = (state.active_conn and state.active_conn.id == c.id) and " *" or ""
+    local db_val  = (c.type == "sqlserver") and c.database or c.service
+    local default_port = (c.type == "sqlserver") and 1433 or 1521
     table.insert(lines, string.format(
-      "  %-20s  %s@%s:%d/%s%s",
-      c.name, c.user, c.host, c.port or 1521, c.service, active
+      "  %-20s  [%-10s]  %s@%s:%d/%s%s",
+      c.name, c.type or "oracle", c.user, c.host, c.port or default_port, db_val or "?", active
     ))
   end
   vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)

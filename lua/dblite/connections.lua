@@ -47,13 +47,22 @@ function M.get_by_name(name)
   end
 end
 
--- Saves a new connection. Required fields: name, host, user, service.
--- port defaults to 1521 if omitted. Returns the saved connection (with generated id).
+-- Saves a new connection.
+-- Oracle required fields: name, host, user, service. Port defaults to 1521.
+-- SQL Server required fields: name, host, user, database. Port defaults to 1433.
+-- type defaults to "oracle" when omitted (backward compat).
 function M.add(conn)
+  local t = conn.type or "oracle"
   assert(type(conn.name) == "string" and conn.name ~= "", "dblite: name is required")
   assert(type(conn.host) == "string" and conn.host ~= "", "dblite: host is required")
   assert(type(conn.user) == "string" and conn.user ~= "", "dblite: user is required")
-  assert(type(conn.service) == "string" and conn.service ~= "", "dblite: service is required")
+  if t == "sqlserver" then
+    assert(type(conn.database) == "string" and conn.database ~= "", "dblite: database is required")
+  else
+    assert(type(conn.service) == "string" and conn.service ~= "", "dblite: service is required")
+  end
+
+  local default_port = t == "sqlserver" and 1433 or 1521
 
   local conns = load()
   for _, c in ipairs(conns) do
@@ -65,12 +74,17 @@ function M.add(conn)
   local entry = {
     id       = gen_id(),
     name     = conn.name,
+    type     = t,
     host     = conn.host,
-    port     = tonumber(conn.port) or 1521,
-    service  = conn.service,
+    port     = tonumber(conn.port) or default_port,
     user     = conn.user,
     password = conn.password or "",
   }
+  if t == "sqlserver" then
+    entry.database = conn.database
+  else
+    entry.service = conn.service
+  end
   table.insert(conns, entry)
   save(conns)
   return entry
@@ -83,7 +97,8 @@ function M.update(id, fields)
   for i, c in ipairs(conns) do
     if c.id == id then
       for k, v in pairs(fields) do c[k] = v end
-      if c.port then c.port = tonumber(c.port) or 1521 end
+      local default_port = (c.type == "sqlserver") and 1433 or 1521
+      if c.port then c.port = tonumber(c.port) or default_port end
       conns[i] = c
       save(conns)
       return c
@@ -105,18 +120,27 @@ function M.delete(id)
   error("dblite: connection not found: " .. id)
 end
 
--- Parses an Oracle URI into connection fields.
--- Accepts: oracle://user[:password]@host[:port]/service
+-- Parses a URI into connection fields.
+-- Oracle:    oracle://user[:password]@host[:port]/service
+-- SQL Server: sqlserver://user[:password]@host[:port]/database
 -- Returns fields table on success, or nil + error string on failure.
 function M.parse_uri(uri)
-  local rest = uri:match("^oracle://(.+)$")
+  local db_type, rest
+  rest = uri:match("^oracle://(.+)$")
+  if rest then
+    db_type = "oracle"
+  else
+    rest = uri:match("^sqlserver://(.+)$")
+    if rest then db_type = "sqlserver" end
+  end
+
   if not rest then
-    return nil, "URI must start with oracle://"
+    return nil, "URI must start with oracle:// or sqlserver://"
   end
 
   local at = rest:find("@")
   if not at then
-    return nil, "URI must contain @ separator (oracle://user:pass@host/service)"
+    return nil, "URI must contain @ separator"
   end
   local userinfo = rest:sub(1, at - 1)
   local hostinfo  = rest:sub(at + 1)
@@ -133,36 +157,47 @@ function M.parse_uri(uri)
 
   local slash = hostinfo:find("/")
   if not slash then
-    return nil, "URI must contain /service after the host"
+    local label = db_type == "sqlserver" and "database" or "service"
+    return nil, "URI must contain /" .. label .. " after the host"
   end
   local hostport = hostinfo:sub(1, slash - 1)
-  local service  = hostinfo:sub(slash + 1)
+  local db_val   = hostinfo:sub(slash + 1)
 
+  local default_port = db_type == "sqlserver" and 1433 or 1521
   local host, port
   local hc = hostport:find(":")
   if hc then
     host = hostport:sub(1, hc - 1)
-    port = tonumber(hostport:sub(hc + 1)) or 1521
+    port = tonumber(hostport:sub(hc + 1)) or default_port
   else
     host = hostport
-    port = 1521
+    port = default_port
   end
 
-  if user    == "" then return nil, "URI is missing user" end
-  if host    == "" then return nil, "URI is missing host" end
-  if service == "" then return nil, "URI is missing service" end
+  if user   == "" then return nil, "URI is missing user" end
+  if host   == "" then return nil, "URI is missing host" end
+  if db_val == "" then return nil, "URI is missing " .. (db_type == "sqlserver" and "database" or "service") end
 
-  return { host = host, port = port, service = service, user = user, password = password }
+  local fields = { type = db_type, host = host, port = port, user = user, password = password }
+  if db_type == "sqlserver" then
+    fields.database = db_val
+  else
+    fields.service = db_val
+  end
+  return fields
 end
 
 -- Returns the JDBC URL for a connection table.
 function M.jdbc_url(conn)
+  local t = conn.type or "oracle"
+  if t == "sqlserver" then
+    return string.format(
+      "jdbc:sqlserver://%s:%d;databaseName=%s;encrypt=true;trustServerCertificate=true",
+      conn.host, tonumber(conn.port) or 1433, conn.database)
+  end
   return string.format(
     "jdbc:oracle:thin:@%s:%d/%s",
-    conn.host,
-    tonumber(conn.port) or 1521,
-    conn.service
-  )
+    conn.host, tonumber(conn.port) or 1521, conn.service)
 end
 
 return M

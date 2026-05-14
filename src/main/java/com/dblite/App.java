@@ -15,7 +15,7 @@ public class App {
 
         if (url == null || user == null || password == null) {
             System.err.println("Missing required env vars: DB_URL, DB_USER, DB_PASSWORD");
-            System.err.println("Example DB_URL: jdbc:oracle:thin:@//localhost:1521/XEPDB1");
+            System.err.println("Example DB_URL: jdbc:oracle:thin:@//localhost:1521/XEPDB1  or  jdbc:sqlserver://localhost:1433;databaseName=MyDB");
             System.exit(1);
         }
 

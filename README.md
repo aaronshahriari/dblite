@@ -66,15 +66,33 @@ Add the directory to `runtimepath`, call `require('dblite').setup()`, and run `:
 
 Connections are stored at `~/.local/share/nvim/dblite/connections.json` (chmod 600). Passwords can be stored as `$ENV_VAR` references and are expanded from the shell environment at query time.
 
+Supported database types: **Oracle** and **SQL Server**.
+
 | Command | Description |
 |---|---|
-| `:DbliteAddConn [uri]` | Add a connection. Accepts `oracle://user:pass@host:port/service` or prompts field-by-field. |
+| `:DbliteAddConn [uri]` | Add a connection. Accepts a URI or prompts field-by-field. |
 | `:DbliteListConns` | List all connections. Active connection is marked `*`. |
 | `:DbliteUseConn <name>` | Set the active connection for queries. |
 | `:DbliteEditConn <name>` | Edit a saved connection. |
 | `:DbliteDeleteConn <name>` | Delete a connection. |
 
 All commands that accept a name support tab-completion.
+
+### URI formats
+
+```
+oracle://user[:password]@host[:port]/service
+sqlserver://user[:password]@host[:port]/database
+```
+
+Examples:
+
+```
+:DbliteAddConn oracle://system:oracle@localhost:1521/XEPDB1
+:DbliteAddConn sqlserver://sa:secret@localhost:1433/MyDatabase
+```
+
+Port defaults to `1521` for Oracle and `1433` for SQL Server when omitted. SQL Server connections use `encrypt=true;trustServerCertificate=true` for broad compatibility with local dev and Azure SQL.
 
 ## Connections Panel
 
