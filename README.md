@@ -1,4 +1,4 @@
-# dblite
+# dblite.nvim
 
 A Neovim plugin for querying Oracle databases. Write SQL in any buffer, run it, and get paginated results in a split. Manages named connections with env-var support for credentials.
 
