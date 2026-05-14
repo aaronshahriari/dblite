@@ -121,6 +121,8 @@ The legacy `:DbliteRun`, `:DbliteRunAt`, and `:DbliteToggleOut` commands are kep
 
 Trailing semicolons are stripped automatically — write SQL however feels natural.
 
+Running a query from any tab automatically opens the dbout split in that tab. If the result window is already open in another tab it stays there too — each tab gets its own view into the same result buffer.
+
 ### Dbout keymaps
 
 | Key | Action |

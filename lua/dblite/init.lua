@@ -320,7 +320,15 @@ local function ensure_result_buffer()
   if state.result_bufnr and vim.api.nvim_buf_is_valid(state.result_bufnr) then
     local bufnr = state.result_bufnr
     local wins = vim.fn.win_findbuf(bufnr)
-    if #wins == 0 then
+    local current_tab = vim.api.nvim_get_current_tabpage()
+    local tab_wins = vim.api.nvim_tabpage_list_wins(current_tab)
+    local tab_win_set = {}
+    for _, w in ipairs(tab_wins) do tab_win_set[w] = true end
+    local visible_in_tab = false
+    for _, w in ipairs(wins) do
+      if tab_win_set[w] then visible_in_tab = true; break end
+    end
+    if not visible_in_tab then
       vim.cmd(split_cmds[config.split_dir] or split_cmds.vertical)
       vim.api.nvim_win_set_buf(0, bufnr)
       local sz = config.split_size or {}
