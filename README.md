@@ -219,6 +219,37 @@ style = {
 },
 ```
 
+## Autocomplete (blink.cmp)
+
+dblite ships a [blink.cmp](https://github.com/Saghen/blink.cmp) source that provides context-aware SQL completions. Add it to your blink config:
+
+```lua
+sources = {
+  providers = {
+    dblite = { module = 'dblite.blink', name = 'dblite' },
+  },
+  default = { 'lsp', 'path', 'snippets', 'buffer', 'dblite' },
+},
+```
+
+### What gets completed
+
+| Context | Items |
+|---|---|
+| General (any SQL buffer) | SQL keywords + table names |
+| After `FROM` / `JOIN` / `INTO` / `UPDATE` | table names first |
+| After `table.` | column names for that table |
+| After `:` | existing `dblite.binds.json` keys + column names as bind param suggestions |
+| Inside `dblite.binds.json` | dotted column keys like `orders.id`, `t2kb.date` |
+
+Schema is fetched once per connection switch in the background — subsequent completions are instant from cache. No Java changes, no extra config — the source uses the active connection set by `:DbliteUseConn`.
+
+### Bind param completions
+
+Typing `:` in SQL suggests both existing keys from your `dblite.binds.json` and column names from the schema in dotted form (`t2kb.date`, `orders.order_id`). This lets you discover and reuse bind names without switching buffers.
+
+Inside `dblite.binds.json`, the source suggests schema column names formatted as dotted keys that match the nested JSON structure dblite expects — e.g. `"t2kb.date"` maps to `{ "t2kb": { "date": ... } }` or a flat `{ "t2kb.date": ... }`.
+
 ## API
 
 All functionality is accessible programmatically:
@@ -238,6 +269,8 @@ db.toggle_panel()         -- open/close the connections panel
 db.open_panel()           -- open the panel
 db.close_panel()          -- close the panel
 db.is_panel_open()        -- returns true/false
+db.get_active_conn()      -- returns the active connection object (or nil)
+db.get_flat_binds()       -- returns flattened dblite.binds.json as a table
 ```
 
 Example keymap setup:

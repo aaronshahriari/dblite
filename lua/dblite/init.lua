@@ -624,6 +624,7 @@ local function edit_conn_by_name(name)
   end
   if state.active_conn and state.active_conn.id == conn.id then
     state.active_conn = connections.get(conn.id)
+    if state.active_conn then require("dblite.schema").prefetch(state.active_conn) end
   end
   vim.notify("\ndblite: updated '" .. (updates.name or conn.name) .. "'", vim.log.levels.INFO)
   panel.refresh()
@@ -743,6 +744,7 @@ vim.api.nvim_create_user_command("DbliteUseConn", function(opts)
     return
   end
   state.active_conn = conn
+  require("dblite.schema").prefetch(conn)
   vim.notify("dblite: using '" .. conn.name .. "'", vim.log.levels.INFO)
   panel.refresh()
 end, { nargs = "?", complete = complete_name })
@@ -1027,7 +1029,10 @@ function M.edit_connections_file()
       panel.refresh()
       if state.active_conn then
         local updated = connections.get(state.active_conn.id)
-        if updated then state.active_conn = updated end
+        if updated then
+          state.active_conn = updated
+          require("dblite.schema").prefetch(updated)
+        end
       end
     end,
   })
@@ -1091,6 +1096,14 @@ do
     nargs    = "+",
     complete = complete,
   })
+end
+
+function M.get_active_conn()
+  return state.active_conn
+end
+
+function M.get_flat_binds()
+  return flatten_binds(load_binds_file())
 end
 
 return M
