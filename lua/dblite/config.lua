@@ -25,9 +25,12 @@ local M = {
     width = 30,  -- columns for the side panel
   },
   binds_split = {
-    split_dir = "vertical",   -- "vertical" | "horizontal"
-    width     = 40,           -- columns; used when split_dir = "vertical". 0 = let nvim decide.
-    height    = 20,           -- rows; used when split_dir = "horizontal". 0 = let nvim decide.
+    style        = "split",    -- "split" | "float"
+    split_dir    = "vertical", -- "vertical" | "horizontal" (split only)
+    width        = 40,         -- columns for vertical split. 0 = let nvim decide.
+    height       = 20,         -- rows for horizontal split. 0 = let nvim decide.
+    float_width  = 0,          -- float width in columns.  0 = 70% of editor width.
+    float_height = 0,          -- float height in rows.    0 = 60% of editor lines.
   },
   flash_timeout  = 2000,  -- ms to hold the query highlight before auto-clearing (0 = wait for results)
   json_view      = "tab",  -- where to open the inspector: "tab" | "vertical" | "horizontal" | "float"

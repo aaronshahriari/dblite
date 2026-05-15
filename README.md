@@ -176,9 +176,21 @@ Values are typed — dblite formats them for SQL automatically:
 - **Edit binds** — `<leader>b` or `:Dblite binds` opens `dblite.binds.json` in a floating window. `:w` saves, `q` closes.
 - **Change values** — edit `dblite.binds.json` directly; the file is re-read on every query execution.
 
-#### Split size
+#### Split or float
 
-The binds split defaults to a 40-column vertical split. Override in setup:
+The binds window opens as a vertical split by default. Set `style = 'float'` to get a centered floating window instead:
+
+```lua
+require('dblite').setup({
+  binds_split = {
+    style        = 'float',  -- 'split' (default) | 'float'
+    float_width  = 80,       -- float width in columns  (0 = 70% of editor width)
+    float_height = 30,       -- float height in rows    (0 = 60% of editor lines)
+  },
+})
+```
+
+Split options (used when `style = 'split'`):
 
 ```lua
 require('dblite').setup({
@@ -268,9 +280,12 @@ require('dblite').setup({
     width = 30,                   -- side panel width in columns
   },
   binds_split = {
-    split_dir = 'vertical',       -- 'vertical' | 'horizontal'
-    width     = 40,               -- columns; used when split_dir = 'vertical'. 0 = let nvim decide.
-    height    = 20,               -- rows; used when split_dir = 'horizontal'. 0 = let nvim decide.
+    style        = 'split',    -- 'split' | 'float'
+    split_dir    = 'vertical', -- 'vertical' | 'horizontal' (split only)
+    width        = 40,         -- columns for vertical split. 0 = let nvim decide.
+    height       = 20,         -- rows for horizontal split. 0 = let nvim decide.
+    float_width  = 0,          -- float width in columns.  0 = 70% of editor width.
+    float_height = 0,          -- float height in rows.    0 = 60% of editor lines.
   },
   style = {
     dbout = {

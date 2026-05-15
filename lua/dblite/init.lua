@@ -943,6 +943,36 @@ end
 local function open_binds_split()
   local path = ensure_binds_file()
   local split_cfg = config.binds_split or {}
+
+  if split_cfg.style == "float" then
+    local w = split_cfg.float_width  or 0
+    local h = split_cfg.float_height or 0
+    if w == 0 then w = math.floor(vim.o.columns * 0.7) end
+    if h == 0 then h = math.floor(vim.o.lines   * 0.6) end
+    local row = math.floor((vim.o.lines   - h) / 2)
+    local col = math.floor((vim.o.columns - w) / 2)
+    local bufnr = vim.fn.bufadd(path)
+    vim.fn.bufload(bufnr)
+    local winnr = vim.api.nvim_open_win(bufnr, true, {
+      relative  = "editor",
+      border    = "rounded",
+      title     = " dblite.binds.json ",
+      title_pos = "center",
+      width     = w,
+      height    = h,
+      row       = row,
+      col       = col,
+    })
+    vim.bo[bufnr].filetype = "json"
+    _binds_win = winnr
+    vim.api.nvim_create_autocmd("WinClosed", {
+      pattern  = tostring(winnr),
+      once     = true,
+      callback = function() _binds_win = nil end,
+    })
+    return
+  end
+
   local dir  = split_cfg.split_dir or "vertical"
   local size = ""
   if dir == "vertical" then
