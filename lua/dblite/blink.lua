@@ -100,11 +100,19 @@ function source:get_completions(ctx, callback)
     if after_colon then
       local items = {}
       local flat = db.get_flat_binds()
-      for key, _ in pairs(flat) do
+      for key, val in pairs(flat) do
+        local detail
+        if val == vim.NIL then
+          detail = "null"
+        elseif type(val) == "string" then
+          detail = val:sub(1,1) == "~" and val:sub(2) or ('"' .. val .. '"')
+        else
+          detail = tostring(val)
+        end
         table.insert(items, {
           label      = key,
           kind       = KIND.Variable,
-          detail     = "bind",
+          detail     = detail,
           insertText = key,
         })
       end

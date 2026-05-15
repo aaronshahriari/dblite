@@ -20,9 +20,10 @@ end
 local function parse(rows)
   local tables, seen, cols = {}, {}, {}
   for _, row in ipairs(rows) do
-    local t = row.table_name
-    local c = row.column_name
-    local d = row.data_type
+    -- Oracle returns uppercase column labels (TABLE_NAME); SQL Server aliases preserve case.
+    local t = row.table_name or row.TABLE_NAME
+    local c = row.column_name or row.COLUMN_NAME
+    local d = row.data_type or row.DATA_TYPE
     if t then
       if not seen[t] then
         seen[t] = true
