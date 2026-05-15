@@ -72,6 +72,7 @@ function source:get_completions(ctx, callback)
           table.insert(items, {
             label      = tname:lower(),
             kind       = KIND.Class,
+            detail     = sch.owners and sch.owners[tname] or nil,
             insertText = tname:lower(),
           })
         end
@@ -166,7 +167,7 @@ function source:get_completions(ctx, callback)
     if after_kw then
       local items = {}
       for _, t in ipairs(sch.tables) do
-        table.insert(items, { label = t, kind = KIND.Class })
+        table.insert(items, { label = t, kind = KIND.Class, detail = sch.owners and sch.owners[t] or nil })
       end
       vim.list_extend(items, kw_items)
       callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })

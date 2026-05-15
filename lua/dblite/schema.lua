@@ -4,7 +4,13 @@ local config      = require("dblite.config")
 
 local _cache = {}
 
-local ORACLE_SQL = "SELECT table_name, column_name, data_type FROM user_tab_columns ORDER BY table_name, column_id"
+local ORACLE_SQL = [[
+SELECT c.owner, c.table_name, c.column_name, c.data_type
+FROM all_tab_columns c
+JOIN all_users u ON u.username = c.owner
+WHERE u.oracle_maintained = 'N'
+AND c.table_name NOT LIKE 'BIN%'
+ORDER BY c.owner, c.table_name, c.column_id]]
 local MSSQL_SQL  = [[
 SELECT TABLE_NAME AS table_name, COLUMN_NAME AS column_name, DATA_TYPE AS data_type
 FROM INFORMATION_SCHEMA.COLUMNS
@@ -18,22 +24,24 @@ local function expand_env(s)
 end
 
 local function parse(rows)
-  local tables, seen, cols = {}, {}, {}
+  local tables, seen, cols, owners = {}, {}, {}, {}
   for _, row in ipairs(rows) do
-    -- Oracle returns uppercase column labels (TABLE_NAME); SQL Server aliases preserve case.
+    -- Oracle returns uppercase column labels; SQL Server aliases preserve case.
     local t = row.table_name or row.TABLE_NAME
     local c = row.column_name or row.COLUMN_NAME
     local d = row.data_type or row.DATA_TYPE
+    local o = row.owner or row.OWNER
     if t then
       if not seen[t] then
         seen[t] = true
         table.insert(tables, t)
         cols[t] = {}
+        if o then owners[t] = o end
       end
       if c then table.insert(cols[t], { name = c, type = d or "" }) end
     end
   end
-  return { tables = tables, columns = cols }
+  return { tables = tables, columns = cols, owners = owners }
 end
 
 -- Calls callback(schema) with the schema for `conn`.
