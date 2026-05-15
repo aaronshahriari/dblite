@@ -23,10 +23,11 @@ local SQL_KEYWORDS = {
 }
 
 local KIND = {
-  Field   = 5,
+  Field    = 5,
   Variable = 6,
-  Class   = 7,
-  Keyword = 14,
+  Class    = 7,
+  Module   = 9,   -- used for owners/schemas
+  Keyword  = 14,
 }
 
 local source = {}
@@ -48,7 +49,7 @@ function source:get_completions(ctx, callback)
   local bufname  = vim.api.nvim_buf_get_name(ctx.bufnr)
   local is_binds = bufname:match("dblite%.binds%.json$") ~= nil
 
-  -- ── dblite.binds.json: suggest dotted column keys ─────────────────────
+  -- ── dblite.binds.json: suggest table.column dotted keys ──────────────
   if is_binds then
     if not conn then
       callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = {} })
@@ -57,24 +58,25 @@ function source:get_completions(ctx, callback)
     schema.get(conn, function(sch)
       local items = {}
       if sch then
-        for _, tname in ipairs(sch.tables) do
-          -- Dotted form: "orders.order_id" — matches flatten_binds output
-          for _, col in ipairs(sch.columns[tname] or {}) do
-            local key = tname:lower() .. "." .. col.name:lower()
+        for _, owner in ipairs(sch.owners) do
+          for _, tname in ipairs(sch.owner_tables[owner] or {}) do
+            local fqn = owner .. "." .. tname
+            for _, col in ipairs(sch.columns[fqn] or {}) do
+              local key = tname:lower() .. "." .. col.name:lower()
+              table.insert(items, {
+                label      = key,
+                kind       = KIND.Field,
+                detail     = col.type,
+                insertText = key,
+              })
+            end
             table.insert(items, {
-              label       = key,
-              kind        = KIND.Field,
-              detail      = col.type,
-              insertText  = key,
+              label      = tname:lower(),
+              kind       = KIND.Class,
+              detail     = owner,
+              insertText = tname:lower(),
             })
           end
-          -- Table name alone for nesting top-level keys
-          table.insert(items, {
-            label      = tname:lower(),
-            kind       = KIND.Class,
-            detail     = sch.owners and sch.owners[tname] or nil,
-            insertText = tname:lower(),
-          })
         end
       end
       callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
@@ -95,7 +97,7 @@ function source:get_completions(ctx, callback)
 
   schema.get(conn, function(sch)
 
-    -- `:param` context — suggest existing bind keys and column names -------
+    -- ── `:param` — existing bind keys + column suggestions ───────────────
     local after_colon = (ctx.trigger and ctx.trigger.character == ":")
                      or line:match(":[a-zA-Z_][a-zA-Z0-9_.]*$") ~= nil
     if after_colon then
@@ -106,31 +108,27 @@ function source:get_completions(ctx, callback)
         if val == vim.NIL then
           detail = "null"
         elseif type(val) == "string" then
-          detail = val:sub(1,1) == "~" and val:sub(2) or ('"' .. val .. '"')
+          detail = val:sub(1, 1) == "~" and val:sub(2) or ('"' .. val .. '"')
         else
           detail = tostring(val)
         end
-        table.insert(items, {
-          label      = key,
-          kind       = KIND.Variable,
-          detail     = detail,
-          insertText = key,
-        })
+        table.insert(items, { label = key, kind = KIND.Variable, detail = detail, insertText = key })
       end
       if sch then
         local seen_col = {}
-        for _, tname in ipairs(sch.tables) do
-          for _, col in ipairs(sch.columns[tname] or {}) do
-            -- dotted form: t2kb.date
-            local dotted = tname:lower() .. "." .. col.name:lower()
-            if not seen_col[dotted] then
-              seen_col[dotted] = true
-              table.insert(items, { label = dotted, kind = KIND.Field, detail = col.type })
-            end
-            -- plain column name
-            if not seen_col[col.name] then
-              seen_col[col.name] = true
-              table.insert(items, { label = col.name, kind = KIND.Field, detail = col.type })
+        for _, owner in ipairs(sch.owners) do
+          for _, tname in ipairs(sch.owner_tables[owner] or {}) do
+            local fqn = owner .. "." .. tname
+            for _, col in ipairs(sch.columns[fqn] or {}) do
+              local dotted = tname:lower() .. "." .. col.name:lower()
+              if not seen_col[dotted] then
+                seen_col[dotted] = true
+                table.insert(items, { label = dotted, kind = KIND.Field, detail = col.type })
+              end
+              if not seen_col[col.name] then
+                seen_col[col.name] = true
+                table.insert(items, { label = col.name, kind = KIND.Field, detail = col.type })
+              end
             end
           end
         end
@@ -144,10 +142,11 @@ function source:get_completions(ctx, callback)
       return
     end
 
-    -- `table.` context — column completions for that table -----------------
-    local after_dot = line:match("(%w+)%.$")
-    if after_dot then
-      local cols = sch.columns[after_dot:upper()] or sch.columns[after_dot]
+    -- ── owner.table. — column completions ────────────────────────────────
+    local dot2_owner, dot2_table = line:match("(%w+)%.(%w+)%.$")
+    if dot2_owner then
+      local fqn  = dot2_owner:upper() .. "." .. dot2_table:upper()
+      local cols = sch.columns[fqn]
       local items = {}
       if cols then
         for _, col in ipairs(cols) do
@@ -159,25 +158,43 @@ function source:get_completions(ctx, callback)
       return
     end
 
-    -- After FROM / JOIN / INTO / UPDATE — tables first ---------------------
+    -- ── owner. — table completions for that owner ─────────────────────────
+    local after_dot = line:match("(%w+)%.$")
+    if after_dot then
+      local owner  = after_dot:upper()
+      local tables = sch.owner_tables[owner]
+      if tables then
+        local items = {}
+        for _, tname in ipairs(tables) do
+          table.insert(items, { label = tname, kind = KIND.Class, detail = owner })
+        end
+        callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
+        return
+      end
+      -- not a known owner — fall through to keyword/owner list
+    end
+
+    -- ── after FROM / JOIN / INTO / UPDATE — owner names first ────────────
     local after_kw = line:match("[Ff][Rr][Oo][Mm]%s+$")
                   or line:match("[Jj][Oo][Ii][Nn]%s+$")
                   or line:match("[Ii][Nn][Tt][Oo]%s+$")
                   or line:match("[Uu][Pp][Dd][Aa][Tt][Ee]%s+$")
     if after_kw then
       local items = {}
-      for _, t in ipairs(sch.tables) do
-        table.insert(items, { label = t, kind = KIND.Class, detail = sch.owners and sch.owners[t] or nil })
+      for _, o in ipairs(sch.owners) do
+        local n = sch.owner_tables[o] and #sch.owner_tables[o] or 0
+        table.insert(items, { label = o, kind = KIND.Module, detail = n .. " tables" })
       end
       vim.list_extend(items, kw_items)
       callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
       return
     end
 
-    -- General context — keywords + tables ----------------------------------
+    -- ── general — owners + keywords ───────────────────────────────────────
     local items = vim.list_extend({}, kw_items)
-    for _, t in ipairs(sch.tables) do
-      table.insert(items, { label = t, kind = KIND.Class })
+    for _, o in ipairs(sch.owners) do
+      local n = sch.owner_tables[o] and #sch.owner_tables[o] or 0
+      table.insert(items, { label = o, kind = KIND.Module, detail = n .. " tables" })
     end
     callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
   end)

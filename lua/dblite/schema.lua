@@ -4,6 +4,9 @@ local config      = require("dblite.config")
 
 local _cache = {}
 
+-- Returns owner, table, column, type per row.
+-- Oracle: all_tab_columns filtered to non-system schemas.
+-- SQL Server: INFORMATION_SCHEMA.COLUMNS with schema as owner.
 local ORACLE_SQL = [[
 SELECT c.owner, c.table_name, c.column_name, c.data_type
 FROM all_tab_columns c
@@ -11,10 +14,12 @@ JOIN all_users u ON u.username = c.owner
 WHERE u.oracle_maintained = 'N'
 AND c.table_name NOT LIKE 'BIN%'
 ORDER BY c.owner, c.table_name, c.column_id]]
-local MSSQL_SQL  = [[
-SELECT TABLE_NAME AS table_name, COLUMN_NAME AS column_name, DATA_TYPE AS data_type
-FROM INFORMATION_SCHEMA.COLUMNS
-ORDER BY TABLE_NAME, ORDINAL_POSITION]]
+
+local MSSQL_SQL = [[
+SELECT c.TABLE_SCHEMA AS owner, c.TABLE_NAME AS table_name,
+       c.COLUMN_NAME AS column_name, c.DATA_TYPE AS data_type
+FROM INFORMATION_SCHEMA.COLUMNS c
+ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME, c.ORDINAL_POSITION]]
 
 local function expand_env(s)
   if type(s) == "string" and s:sub(1, 1) == "$" then
@@ -23,30 +28,46 @@ local function expand_env(s)
   return s
 end
 
+-- Builds:
+--   owners       = ["OWNER1", ...]          unique, in appearance order
+--   owner_tables = { OWNER1 = ["T1", ...] } tables per owner (no duplicates)
+--   columns      = { ["OWNER.TABLE"] = [{name, type}] }
 local function parse(rows)
-  local tables, seen, cols, owners = {}, {}, {}, {}
+  local owners_seen = {}
+  local owners       = {}
+  local owner_tables = {}
+  local columns      = {}
+
   for _, row in ipairs(rows) do
-    -- Oracle returns uppercase column labels; SQL Server aliases preserve case.
+    local o = row.owner      or row.OWNER
     local t = row.table_name or row.TABLE_NAME
     local c = row.column_name or row.COLUMN_NAME
-    local d = row.data_type or row.DATA_TYPE
-    local o = row.owner or row.OWNER
-    if t then
-      if not seen[t] then
-        seen[t] = true
-        table.insert(tables, t)
-        cols[t] = {}
-        if o then owners[t] = o end
+    local d = row.data_type  or row.DATA_TYPE
+
+    if o and t then
+      if not owners_seen[o] then
+        owners_seen[o] = true
+        table.insert(owners, o)
+        owner_tables[o] = {}
       end
-      if c then table.insert(cols[t], { name = c, type = d or "" }) end
+
+      local fqn = o .. "." .. t
+      if not columns[fqn] then
+        columns[fqn] = {}
+        table.insert(owner_tables[o], t)
+      end
+
+      if c then
+        table.insert(columns[fqn], { name = c, type = d or "" })
+      end
     end
   end
-  return { tables = tables, columns = cols, owners = owners }
+
+  return { owners = owners, owner_tables = owner_tables, columns = columns }
 end
 
--- Calls callback(schema) with the schema for `conn`.
--- Caches per connection id; in-flight requests share one fetch.
--- callback receives nil on fetch failure.
+-- Calls callback(schema) — cached per connection, in-flight deduplication.
+-- callback receives nil on failure.
 function M.get(conn, callback)
   local id = conn.id
   local e  = _cache[id]
@@ -90,14 +111,7 @@ function M.get(conn, callback)
     end)
 end
 
--- Drop the cached schema for a connection (e.g. after schema changes).
-function M.invalidate(conn_id)
-  _cache[conn_id] = nil
-end
-
--- Fire-and-forget prefetch: warms the cache in the background.
-function M.prefetch(conn)
-  M.get(conn, function() end)
-end
+function M.invalidate(conn_id) _cache[conn_id] = nil end
+function M.prefetch(conn) M.get(conn, function() end) end
 
 return M
