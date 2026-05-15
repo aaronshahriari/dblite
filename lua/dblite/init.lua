@@ -382,6 +382,19 @@ local function load_binds_file()
   return (ok and type(data) == "table") and data or {}
 end
 
+local function flatten_binds(tbl, prefix, out)
+  out = out or {}
+  for k, v in pairs(tbl) do
+    local key = prefix and (prefix .. "." .. k) or k
+    if type(v) == "table" then
+      flatten_binds(v, key, out)
+    else
+      out[key] = v
+    end
+  end
+  return out
+end
+
 -- JSON number → verbatim; "~expr" → raw SQL; string → auto-quoted + escaped
 local function format_bind_value(v)
   if type(v) == "number" then return tostring(v) end
@@ -393,8 +406,8 @@ end
 local function parse_bind_names(sql)
   local seen, names = {}, {}
   local stripped = sql:gsub("'[^']*'", function(s) return string.rep(" ", #s) end)
-  for name in stripped:gmatch(":[a-zA-Z_][a-zA-Z0-9_]*") do
-    local key = name:sub(2)
+  for raw in stripped:gmatch(":[a-zA-Z_][a-zA-Z0-9_.]*") do
+    local key = raw:sub(2):gsub("%.+$", "")
     if not seen[key] then seen[key] = true; table.insert(names, key) end
   end
   return names
@@ -404,8 +417,10 @@ local function apply_binds(sql, binds)
   local sorted = vim.tbl_keys(binds)
   table.sort(sorted, function(a, b) return #a > #b end)
   for _, name in ipairs(sorted) do
-    local val = format_bind_value(binds[name])
-    sql = sql:gsub(":" .. name .. "([^a-zA-Z0-9_])", val .. "%1")
+    local val  = format_bind_value(binds[name])
+    local pat  = name:gsub("%.", "%%.")           -- escape dots for Lua pattern
+    local repl = val:gsub("%%", "%%%%")           -- escape % in replacement string
+    sql = sql:gsub(":" .. pat .. "([^a-zA-Z0-9_.])", repl .. "%1")
     if sql:sub(-(#name + 1)) == ":" .. name then
       sql = sql:sub(1, -(#name + 2)) .. val
     end
@@ -507,7 +522,7 @@ local function execute_core(query)
   end -- do_run
 
   if #bind_names > 0 then
-    local file_binds = load_binds_file()
+    local file_binds = flatten_binds(load_binds_file())
     local missing = vim.tbl_filter(
       function(n) return file_binds[n] == nil end, bind_names)
     if #missing > 0 then
