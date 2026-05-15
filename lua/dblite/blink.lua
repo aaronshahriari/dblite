@@ -22,13 +22,74 @@ local SQL_KEYWORDS = {
   "COUNT", "SUM", "AVG", "MIN", "MAX",
 }
 
+-- SQL keywords that can't be table aliases
+local CLAUSE_WORDS = {
+  WHERE=1, JOIN=1, ON=1, SET=1, GROUP=1, HAVING=1, ORDER=1,
+  LIMIT=1, INNER=1, LEFT=1, RIGHT=1, FULL=1, OUTER=1, CROSS=1,
+  UNION=1, EXCEPT=1, INTERSECT=1, FETCH=1, OFFSET=1, AS=1,
+  SELECT=1, FROM=1, INTO=1, UPDATE=1, DELETE=1, INSERT=1, AND=1, OR=1,
+}
+
 local KIND = {
   Field    = 5,
   Variable = 6,
   Class    = 7,
-  Module   = 9,   -- used for owners/schemas
+  Module   = 9,
   Keyword  = 14,
 }
+
+-- Scan the buffer for FROM/JOIN owner.table [AS] [alias] references.
+-- Returns:
+--   qcols   — deduplicated columns from all referenced tables, [{name, type, src}]
+--   fqn_map — {TNAME_OR_ALIAS_UPPER -> "OWNER.TABLE"} for dot-completion lookups
+local function query_context(bufnr, sch)
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local text  = table.concat(lines, " ")
+
+  local qcols    = {}
+  local seen_col = {}
+  local fqn_map  = {}
+
+  local function add_fqn(owner, tname, alias)
+    local fqn = owner:upper() .. "." .. tname:upper()
+    fqn_map[tname:upper()] = fqn
+    if alias then fqn_map[alias:upper()] = fqn end
+    local tbl_cols = sch.columns[fqn]
+    if tbl_cols then
+      for _, col in ipairs(tbl_cols) do
+        if not seen_col[col.name] then
+          seen_col[col.name] = true
+          table.insert(qcols, { name = col.name, type = col.type, src = tname:upper() })
+        end
+      end
+    end
+  end
+
+  -- Match FROM / JOIN  owner.table  [AS] [alias]
+  -- Four passes keeps the patterns readable and avoids fragile mega-patterns.
+  for _, kw_pat in ipairs({ "[Ff][Rr][Oo][Mm]", "[Jj][Oo][Ii][Nn]" }) do
+    -- basic: owner.table
+    for owner, tname in text:gmatch(kw_pat .. "%s+([%w_]+)%.([%w_]+)") do
+      add_fqn(owner, tname, nil)
+    end
+    -- with AS alias: owner.table AS alias
+    for owner, tname, alias in text:gmatch(
+        kw_pat .. "%s+([%w_]+)%.([%w_]+)%s+[Aa][Ss]%s+([%w_]+)") do
+      add_fqn(owner, tname, alias)
+    end
+    -- bare alias: owner.table alias  (alias must not be a SQL keyword)
+    for owner, tname, alias in text:gmatch(
+        kw_pat .. "%s+([%w_]+)%.([%w_]+)%s+([%w_]+)") do
+      if not CLAUSE_WORDS[alias:upper()] then
+        add_fqn(owner, tname, alias)
+      end
+    end
+  end
+
+  return qcols, fqn_map
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────
 
 local source = {}
 
@@ -96,6 +157,8 @@ function source:get_completions(ctx, callback)
   end
 
   schema.get(conn, function(sch)
+    -- Build query-context columns and alias map from the current buffer.
+    local qcols, fqn_map = query_context(ctx.bufnr, sch)
 
     -- ── `:param` — existing bind keys + column suggestions ───────────────
     local after_colon = (ctx.trigger and ctx.trigger.character == ":")
@@ -142,7 +205,7 @@ function source:get_completions(ctx, callback)
       return
     end
 
-    -- ── owner.table. — column completions ────────────────────────────────
+    -- ── owner.table. — column completions (explicit two-level dot) ───────
     local dot2_owner, dot2_table = line:match("([%w_]+)%.([%w_]+)%.$")
     if dot2_owner then
       local fqn  = dot2_owner:upper() .. "." .. dot2_table:upper()
@@ -158,20 +221,37 @@ function source:get_completions(ctx, callback)
       return
     end
 
-    -- ── owner. — table completions for that owner ─────────────────────────
+    -- ── word. — owner (→ tables) OR table/alias (→ columns) ─────────────
     local after_dot = line:match("([%w_]+)%.$")
     if after_dot then
-      local owner  = after_dot:upper()
-      local tables = sch.owner_tables[owner]
-      if tables then
+      local upper = after_dot:upper()
+
+      -- Is it an owner/schema?
+      local owner_tables = sch.owner_tables[upper]
+      if owner_tables then
         local items = {}
-        for _, tname in ipairs(tables) do
-          table.insert(items, { label = tname, kind = KIND.Class, detail = owner })
+        for _, tname in ipairs(owner_tables) do
+          table.insert(items, { label = tname, kind = KIND.Class, detail = upper })
         end
         callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
         return
       end
-      -- not a known owner — fall through to keyword/owner list
+
+      -- Is it a table name or alias referenced in this query?
+      local fqn = fqn_map[upper]
+      if fqn then
+        local cols = sch.columns[fqn]
+        if cols then
+          local items = {}
+          for _, col in ipairs(cols) do
+            table.insert(items, { label = col.name, kind = KIND.Field, detail = col.type })
+          end
+          callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
+          return
+        end
+      end
+
+      -- Unknown word before dot — fall through to general context
     end
 
     -- ── after FROM / JOIN / INTO / UPDATE — owner names first ────────────
@@ -190,8 +270,40 @@ function source:get_completions(ctx, callback)
       return
     end
 
-    -- ── general — owners + keywords ───────────────────────────────────────
-    local items = vim.list_extend({}, kw_items)
+    -- ── after SELECT / WHERE / AND / OR / SET / ON — columns first ───────
+    local after_clause = line:match("[Ss][Ee][Ll][Ee][Cc][Tt]%s+$")
+                      or line:match("[Ss][Ee][Ll][Ee][Cc][Tt]%s+.-%,%s*$")
+                      or line:match("[Ww][Hh][Ee][Rr][Ee]%s+$")
+                      or line:match("[Aa][Nn][Dd]%s+$")
+                      or line:match("[Oo][Rr]%s+$")
+                      or line:match("[Ss][Ee][Tt]%s+$")
+                      or line:match("[Oo][Nn]%s+$")
+    if after_clause and #qcols > 0 then
+      local items = {}
+      for _, col in ipairs(qcols) do
+        table.insert(items, {
+          label        = col.name,
+          kind         = KIND.Field,
+          detail       = col.type .. "  " .. col.src,
+          score_offset = 5,
+        })
+      end
+      vim.list_extend(items, kw_items)
+      callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
+      return
+    end
+
+    -- ── general — query columns first, then owners + keywords ────────────
+    local items = {}
+    for _, col in ipairs(qcols) do
+      table.insert(items, {
+        label        = col.name,
+        kind         = KIND.Field,
+        detail       = col.type .. "  " .. col.src,
+        score_offset = 3,
+      })
+    end
+    vim.list_extend(items, kw_items)
     for _, o in ipairs(sch.owners) do
       local n = sch.owner_tables[o] and #sch.owner_tables[o] or 0
       table.insert(items, { label = o, kind = KIND.Module, detail = n .. " tables" })
