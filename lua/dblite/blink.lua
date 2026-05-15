@@ -143,7 +143,7 @@ function source:get_completions(ctx, callback)
     end
 
     -- ── owner.table. — column completions ────────────────────────────────
-    local dot2_owner, dot2_table = line:match("(%w+)%.(%w+)%.$")
+    local dot2_owner, dot2_table = line:match("([%w_]+)%.([%w_]+)%.$")
     if dot2_owner then
       local fqn  = dot2_owner:upper() .. "." .. dot2_table:upper()
       local cols = sch.columns[fqn]
@@ -159,7 +159,7 @@ function source:get_completions(ctx, callback)
     end
 
     -- ── owner. — table completions for that owner ─────────────────────────
-    local after_dot = line:match("(%w+)%.$")
+    local after_dot = line:match("([%w_]+)%.$")
     if after_dot then
       local owner  = after_dot:upper()
       local tables = sch.owner_tables[owner]
