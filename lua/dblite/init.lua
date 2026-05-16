@@ -19,24 +19,30 @@ local split_cmds = {
   tab        = "tabnew",
 }
 
-local ns       = vim.api.nvim_create_namespace("dblite")
-local flash_ns = vim.api.nvim_create_namespace("dblite_flash")
-vim.api.nvim_set_hl(0, "DbliteStatusPage", { link = "Title",    default = true })
-vim.api.nvim_set_hl(0, "DbliteFlash",      { link = "Visual",    default = true })
+local ns        = vim.api.nvim_create_namespace("dblite")
+local flash_ns  = vim.api.nvim_create_namespace("dblite_flash")
+local search_ns = vim.api.nvim_create_namespace("dblite_search")
+vim.api.nvim_set_hl(0, "DbliteStatusPage",      { link = "Title",           default = true })
+vim.api.nvim_set_hl(0, "DbliteFlash",           { link = "Visual",          default = true })
+vim.api.nvim_set_hl(0, "DbliteSearch",          { link = "Search",          default = true })
+vim.api.nvim_set_hl(0, "DbliteCancelled",       { link = "DiagnosticError", default = true })
 
 local state = {
-  result_bufnr   = nil,
-  current_job    = nil,
-  rows           = {},
-  columns        = {},
-  widths         = {},
-  page           = 1,
-  active_conn    = nil,
-  spinner_timer  = nil,
-  spinner_start  = 0,
-  last_elapsed   = nil,
-  flash_bufnr    = nil,
-  raw_json       = nil,
+  result_bufnr    = nil,
+  current_job     = nil,
+  rows            = {},
+  columns         = {},
+  widths          = {},
+  page            = 1,
+  active_conn     = nil,
+  spinner_timer   = nil,
+  spinner_start   = 0,
+  last_elapsed    = nil,
+  flash_bufnr     = nil,
+  raw_json        = nil,
+  search_matches  = {},  -- global row indices (1-based) matching current search
+  search_current  = 0,   -- index into search_matches of the highlighted match
+  search_pattern  = nil, -- active pattern string; nil = no search
 }
 
 local function merge_into(target, source)
@@ -52,14 +58,23 @@ end
 function M.setup(opts)
   if opts then merge_into(config, opts) end
   local ek = (config.keymaps and config.keymaps.editor) or {}
-  if ek.binds and ek.binds ~= "" then
-    vim.keymap.set("n", ek.binds, function() M.edit_binds() end,
-      { silent = true, desc = "dblite: edit bind parameters" })
-  end
-  if ek.connections and ek.connections ~= "" then
-    vim.keymap.set("n", ek.connections, function() M.edit_connections_file() end,
-      { silent = true, desc = "dblite: edit connections file" })
-  end
+  -- SQL-only keymaps: set per-buffer via FileType autocmd
+  local sql_fts = "sql,plsql,mysql,sqlite"
+  vim.api.nvim_create_autocmd("FileType", {
+    pattern  = vim.split(sql_fts, ","),
+    group    = vim.api.nvim_create_augroup("dblite_sql_keymaps", { clear = true }),
+    callback = function(ev)
+      local buf = ev.buf
+      if ek.binds and ek.binds ~= "" then
+        vim.keymap.set("n", ek.binds, function() M.edit_binds() end,
+          { buffer = buf, silent = true, desc = "dblite: edit bind parameters" })
+      end
+      if ek.connections and ek.connections ~= "" then
+        vim.keymap.set("n", ek.connections, function() M.edit_connections_file() end,
+          { buffer = buf, silent = true, desc = "dblite: edit connections file" })
+      end
+    end,
+  })
 end
 
 local function cell(value, width)
@@ -190,6 +205,57 @@ local function set_status(text)
   vim.bo[bufnr].modifiable = false
 end
 
+local function set_cancelled_status(elapsed)
+  local bufnr = state.result_bufnr
+  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
+  local dbout_style = (config.style and config.style.dbout) or {}
+  local sections = dbout_style.sections or {
+    { "pagination" },
+    { "query_time", sep = "  —  " },
+    { "connection", sep = "  ·  " },
+  }
+
+  local status   = ""
+  local hl_marks = {}
+  local has_items = false
+  for _, sec in ipairs(sections) do
+    local item = sec[1]
+    local value, cancelled_hl
+    if item == "pagination" then
+      value = "cancelled"
+      cancelled_hl = true
+    elseif item == "query_time" then
+      value = string.format("%.3fs", elapsed)
+      cancelled_hl = true
+    elseif item == "connection" then
+      value = state.active_conn and state.active_conn.name or "no connection"
+    elseif item == "binds_file" then
+      if vim.fn.filereadable(binds_file_path()) == 1 then value = "binds" end
+    end
+    if value then
+      if has_items then
+        local sep = sec.sep or "  ·  "
+        local sep_col = #status
+        status = status .. sep
+        table.insert(hl_marks, { col = sep_col, end_col = #status, hl = "DbliteStatusPage" })
+      end
+      local col = #status
+      status = status .. value
+      local hl = cancelled_hl and "DbliteCancelled" or (sec.hl or "DbliteStatusPage")
+      table.insert(hl_marks, { col = col, end_col = #status, hl = hl })
+      has_items = true
+    end
+  end
+
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { status })
+  vim.bo[bufnr].modifiable = false
+  vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+  for _, m in ipairs(hl_marks) do
+    vim.api.nvim_buf_set_extmark(bufnr, ns, 0, m.col, { end_col = m.end_col, hl_group = m.hl })
+  end
+end
+
 local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 
 local function stop_spinner()
@@ -253,7 +319,7 @@ local function set_global_cancel_keymap()
       stop_spinner()
       clear_flash()
       if state.result_bufnr and vim.api.nvim_buf_is_valid(state.result_bufnr) then
-        set_status("-- cancelling...")
+        set_status("cancelling...")
       end
     end
   end, { desc = "dblite: cancel in-flight query" })
@@ -296,7 +362,7 @@ local function configure_result_buffer(bufnr)
       pcall(function() state.current_job:kill(15) end)
       stop_spinner()
       clear_flash()
-      set_status("-- cancelling...")
+      set_status("cancelling...")
     end
   end, "dblite: cancel query")
 
@@ -488,7 +554,7 @@ local function execute_core(query)
       if not state.result_bufnr or not vim.api.nvim_buf_is_valid(state.result_bufnr) then return end
 
       if result.signal ~= 0 then
-        set_status(string.format("-- cancelled  (%.3fs)", elapsed))
+        set_cancelled_status(elapsed)
         return
       end
 
