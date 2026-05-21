@@ -21,7 +21,8 @@ local M = {
   filetype = "", -- buffer filetype for results. "" disables highlighting (fastest for huge results).
   page_size = 100,    -- rows per page in the result buffer
   max_col_width = 50, -- truncate cell values wider than this; 0 = no limit
-  max_history = 20,   -- number of past query results kept in history; 0 = unlimited
+  max_history = 20,        -- number of past query results kept in history; 0 = unlimited
+  show_column_types = false, -- show [TYPE] next to column headers by default (toggle with d)
   panel = {
     width = 30,  -- columns for the side panel
   },
@@ -59,6 +60,7 @@ local M = {
       history_prev = "[",       -- previous query result in history
       history_next = "]",       -- next query result in history
       hover_query  = "K",       -- hover to show the executed query
+      toggle_types = "d",       -- toggle column type annotations
     },
     editor = {
       binds = "<leader>b",  -- open dblite.binds.json popup

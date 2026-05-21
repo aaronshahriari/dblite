@@ -26,6 +26,7 @@ vim.api.nvim_set_hl(0, "DbliteStatusPage",      { link = "Title",           defa
 vim.api.nvim_set_hl(0, "DbliteFlash",           { link = "Visual",          default = true })
 vim.api.nvim_set_hl(0, "DbliteSearch",          { link = "Search",          default = true })
 vim.api.nvim_set_hl(0, "DbliteCancelled",       { link = "DiagnosticError", default = true })
+vim.api.nvim_set_hl(0, "DbliteColumnType",      { link = "Comment",         default = true })
 
 local state = {
   result_bufnr    = nil,
@@ -45,6 +46,8 @@ local state = {
   search_pattern  = nil, -- active pattern string; nil = no search
   history         = {},  -- ring of past query results
   history_idx     = 0,   -- current position in history; 0 = no entries
+  column_types    = {},  -- parallel array to columns: type name per column
+  show_types      = nil, -- nil = use config default; true/false = user toggled
 }
 
 local function merge_into(target, source)
@@ -189,20 +192,52 @@ local function render_page()
     return
   end
 
-  local header_parts = {}
+  local types_visible = state.show_types
+  if types_visible == nil then types_visible = config.show_column_types end
+  local type_hl = (config.style and config.style.dbout and config.style.dbout.column_type_hl)
+    or "DbliteColumnType"
+
+  -- Compute effective widths: if types are shown, widen columns to fit header + type
+  local eff_widths = {}
+  for i, col in ipairs(state.columns) do
+    local w = state.widths[col]
+    if types_visible and state.column_types[i] and state.column_types[i] ~= "" then
+      local header_w = #col + 2 + #state.column_types[i] + 1  -- "COL [TYPE]"
+      if header_w > w then w = header_w end
+    end
+    eff_widths[col] = w
+  end
+
+  local header_line = ""
+  local type_marks = {}
+  for i, col in ipairs(state.columns) do
+    if i > 1 then header_line = header_line .. " | " end
+    local col_start = #header_line
+    if types_visible and state.column_types[i] and state.column_types[i] ~= "" then
+      local type_str = " [" .. state.column_types[i] .. "]"
+      header_line = header_line .. cell(col .. type_str, eff_widths[col])
+      local mark_start = col_start + #col
+      local mark_end = math.min(col_start + #col + #type_str, col_start + eff_widths[col])
+      if mark_start < mark_end then
+        table.insert(type_marks, { col = mark_start, end_col = mark_end })
+      end
+    else
+      header_line = header_line .. cell(col, eff_widths[col])
+    end
+  end
+  table.insert(lines, header_line)
+
   local sep_parts = {}
   for _, col in ipairs(state.columns) do
-    table.insert(header_parts, cell(col, state.widths[col]))
-    table.insert(sep_parts, string.rep("-", state.widths[col]))
+    table.insert(sep_parts, string.rep("-", eff_widths[col]))
   end
-  table.insert(lines, table.concat(header_parts, " | "))
   table.insert(lines, table.concat(sep_parts, "-+-"))
 
   for i = start_row, end_row do
     local row = state.rows[i]
     local parts = {}
     for _, col in ipairs(state.columns) do
-      table.insert(parts, cell(row[col], state.widths[col]))
+      table.insert(parts, cell(row[col], eff_widths[col]))
     end
     table.insert(lines, table.concat(parts, " | "))
   end
@@ -215,6 +250,12 @@ local function render_page()
   for _, m in ipairs(hl_marks) do
     vim.api.nvim_buf_set_extmark(bufnr, ns, 0, m.col, { end_col = m.end_col, hl_group = m.hl })
   end
+  -- Highlight type annotations on the header line (line index 2 = third line)
+  local header_row = 2
+  for _, tm in ipairs(type_marks) do
+    vim.api.nvim_buf_set_extmark(bufnr, ns, header_row, tm.col,
+      { end_col = tm.end_col, hl_group = type_hl })
+  end
 end
 
 local function restore_history(idx)
@@ -222,6 +263,7 @@ local function restore_history(idx)
   local entry = state.history[idx]
   state.history_idx  = idx
   state.columns      = entry.columns
+  state.column_types = entry.column_types or {}
   state.rows         = entry.rows
   state.widths       = entry.widths
   state.raw_json     = entry.raw_json
@@ -403,6 +445,13 @@ local function configure_result_buffer(bufnr)
       focus_id = "dblite_query_hover",
     })
   end, "dblite: hover query")
+
+  map(km.toggle_types or "d", function()
+    local cur = state.show_types
+    if cur == nil then cur = config.show_column_types end
+    state.show_types = not cur
+    render_page()
+  end, "dblite: toggle column types")
 
   vim.api.nvim_create_autocmd("BufWipeout", {
     buffer = bufnr,
@@ -606,8 +655,9 @@ local function execute_core(query)
         return
       end
 
-      state.columns      = parsed.columns or {}
-      state.rows         = parsed.rows    or {}
+      state.columns      = parsed.columns      or {}
+      state.column_types = parsed.column_types or {}
+      state.rows         = parsed.rows         or {}
       state.widths       = compute_widths(state.rows, state.columns)
       state.page         = 1
       state.last_elapsed = elapsed
@@ -616,6 +666,7 @@ local function execute_core(query)
       local max_hist = config.max_history or 20
       table.insert(state.history, {
         columns      = state.columns,
+        column_types = state.column_types,
         rows         = state.rows,
         widths       = state.widths,
         raw_json     = state.raw_json,

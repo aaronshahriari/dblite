@@ -60,6 +60,12 @@ public class App {
                     System.out.print("\"" + escape(meta.getColumnLabel(i)) + "\"");
                 }
                 System.out.println("],");
+                System.out.print("\"column_types\": [");
+                for (int i = 1; i <= columnCount; i++) {
+                    if (i > 1) System.out.print(", ");
+                    System.out.print("\"" + escape(meta.getColumnTypeName(i)) + "\"");
+                }
+                System.out.println("],");
                 System.out.println("\"rows\": [");
 
                 int rowCount = 0;
