@@ -48,6 +48,7 @@ local state = {
   history_idx     = 0,   -- current position in history; 0 = no entries
   column_types    = {},  -- parallel array to columns: type name per column
   show_types      = nil, -- nil = use config default; true/false = user toggled
+  fullscreen_tab  = nil, -- tabpage handle when dbout is fullscreen
 }
 
 local function merge_into(target, source)
@@ -77,6 +78,10 @@ function M.setup(opts)
       if ek.connections and ek.connections ~= "" then
         vim.keymap.set("n", ek.connections, function() M.edit_connections_file() end,
           { buffer = buf, silent = true, desc = "dblite: edit connections file" })
+      end
+      if ek.fullscreen and ek.fullscreen ~= "" then
+        vim.keymap.set("n", ek.fullscreen, function() M.toggle_fullscreen() end,
+          { buffer = buf, silent = true, desc = "dblite: toggle dbout fullscreen" })
       end
     end,
   })
@@ -452,6 +457,11 @@ local function configure_result_buffer(bufnr)
     state.show_types = not cur
     render_page()
   end, "dblite: toggle column types")
+
+  local ek = (config.keymaps and config.keymaps.editor) or {}
+  map(ek.fullscreen or "<leader>l", function()
+    M.toggle_fullscreen()
+  end, "dblite: toggle fullscreen")
 
   vim.api.nvim_create_autocmd("BufWipeout", {
     buffer = bufnr,
@@ -954,6 +964,23 @@ function M.toggle_dbout()
     end
     apply_dbout_win_style(0)
     vim.cmd("wincmd p")
+  end
+end
+
+function M.toggle_fullscreen()
+  if not state.result_bufnr or not vim.api.nvim_buf_is_valid(state.result_bufnr) then return end
+
+  if state.fullscreen_tab and vim.api.nvim_tabpage_is_valid(state.fullscreen_tab) then
+    -- Leave fullscreen: close the tab, return to previous tab
+    vim.api.nvim_set_current_tabpage(state.fullscreen_tab)
+    vim.cmd("tabclose")
+    state.fullscreen_tab = nil
+  else
+    -- Enter fullscreen: open dbout in a new tab
+    vim.cmd("tabnew")
+    vim.api.nvim_win_set_buf(0, state.result_bufnr)
+    apply_dbout_win_style(0)
+    state.fullscreen_tab = vim.api.nvim_get_current_tabpage()
   end
 end
 

@@ -63,7 +63,8 @@ local M = {
       toggle_types = "d",       -- toggle column type annotations
     },
     editor = {
-      binds = "<leader>b",  -- open dblite.binds.json popup
+      binds      = "<leader>b",  -- open dblite.binds.json popup
+      fullscreen = "<leader>l",  -- toggle dbout fullscreen
     },
     panel = {    -- keymaps active inside the connections panel
       select = "<CR>", -- activate connection under cursor

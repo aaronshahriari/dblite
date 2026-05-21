@@ -134,6 +134,7 @@ Running a query from any tab moves the dbout split to that tab. If the result wi
 | `]` | Next result in history |
 | `K` | Hover — show the query that produced the current result |
 | `d` | Toggle column type annotations (`COL [VARCHAR2]`) |
+| `<leader>l` | Toggle dbout fullscreen (opens in a new tab, closes to return) |
 | `<C-c>` | Cancel in-flight query |
 | `gi` | Inspect current page (full untruncated output) |
 
@@ -382,7 +383,8 @@ require('dblite').setup({
       toggle_types = 'd',         -- toggle column type annotations
     },
     editor = {
-      binds = '<leader>b',        -- toggle dblite.binds.json split
+      binds      = '<leader>b',   -- toggle dblite.binds.json split
+      fullscreen = '<leader>l',   -- toggle dbout fullscreen
     },
     panel = { select = '<CR>', edit = 'cw', close = 'q' },
   },
