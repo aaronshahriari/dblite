@@ -49,7 +49,7 @@ local state = {
 
 local function merge_into(target, source)
   for k, v in pairs(source) do
-    if type(v) == "table" and type(target[k]) == "table" then
+    if type(v) == "table" and type(target[k]) == "table" and not vim.islist(v) then
       merge_into(target[k], v)
     else
       target[k] = v
