@@ -43,6 +43,8 @@ local state = {
   search_matches  = {},  -- global row indices (1-based) matching current search
   search_current  = 0,   -- index into search_matches of the highlighted match
   search_pattern  = nil, -- active pattern string; nil = no search
+  history         = {},  -- ring of past query results
+  history_idx     = 0,   -- current position in history; 0 = no entries
 }
 
 local function merge_into(target, source)
@@ -141,6 +143,10 @@ local function render_page()
       value = state.active_conn and state.active_conn.name or "no connection"
     elseif item == "binds_file" then
       if vim.fn.filereadable(binds_file_path()) == 1 then value = "binds" end
+    elseif item == "history" then
+      if #state.history > 1 then
+        value = string.format("◀ %d/%d ▶", state.history_idx, #state.history)
+      end
     end
     if value then
       if has_items then
@@ -197,6 +203,19 @@ local function render_page()
   end
 end
 
+local function restore_history(idx)
+  if idx < 1 or idx > #state.history then return end
+  local entry = state.history[idx]
+  state.history_idx  = idx
+  state.columns      = entry.columns
+  state.rows         = entry.rows
+  state.widths       = entry.widths
+  state.raw_json     = entry.raw_json
+  state.last_elapsed = entry.last_elapsed
+  state.page         = 1
+  render_page()
+end
+
 local function set_status(text)
   local bufnr = state.result_bufnr
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
@@ -231,6 +250,10 @@ local function set_cancelled_status(elapsed)
       value = state.active_conn and state.active_conn.name or "no connection"
     elseif item == "binds_file" then
       if vim.fn.filereadable(binds_file_path()) == 1 then value = "binds" end
+    elseif item == "history" then
+      if #state.history > 1 then
+        value = string.format("◀ %d/%d ▶", state.history_idx, #state.history)
+      end
     end
     if value then
       if has_items then
@@ -369,6 +392,31 @@ local function configure_result_buffer(bufnr)
   map(km.inspect or "gi", function()
     M.inspect()
   end, "dblite: inspect current page")
+
+  map(km.history_prev or "[", function()
+    if state.history_idx > 1 then
+      restore_history(state.history_idx - 1)
+    end
+  end, "dblite: previous history entry")
+
+  map(km.history_next or "]", function()
+    if state.history_idx < #state.history then
+      restore_history(state.history_idx + 1)
+    end
+  end, "dblite: next history entry")
+
+  map(km.hover_query or "K", function()
+    local entry = state.history[state.history_idx]
+    if not entry or not entry.query_text then
+      vim.notify("dblite: no query in history", vim.log.levels.INFO)
+      return
+    end
+    local lines = vim.split(entry.query_text, "\n", { plain = true })
+    vim.lsp.util.open_floating_preview(lines, "sql", {
+      border = "rounded",
+      focus_id = "dblite_query_hover",
+    })
+  end, "dblite: hover query")
 
   vim.api.nvim_create_autocmd("BufWipeout", {
     buffer = bufnr,
@@ -578,6 +626,22 @@ local function execute_core(query)
       state.page         = 1
       state.last_elapsed = elapsed
       state.raw_json     = result.stdout
+
+      local max_hist = config.max_history or 20
+      table.insert(state.history, {
+        columns      = state.columns,
+        rows         = state.rows,
+        widths       = state.widths,
+        raw_json     = state.raw_json,
+        last_elapsed = state.last_elapsed,
+        conn_name    = state.active_conn and state.active_conn.name or nil,
+        query_text   = q,
+      })
+      if max_hist > 0 and #state.history > max_hist then
+        table.remove(state.history, 1)
+      end
+      state.history_idx = #state.history
+
       render_page()
       if state.result_bufnr and #vim.fn.win_findbuf(state.result_bufnr) == 0 then
         vim.notify("dblite: results ready — toggle dbout to view", vim.log.levels.INFO)

@@ -21,6 +21,7 @@ local M = {
   filetype = "", -- buffer filetype for results. "" disables highlighting (fastest for huge results).
   page_size = 100,    -- rows per page in the result buffer
   max_col_width = 50, -- truncate cell values wider than this; 0 = no limit
+  max_history = 20,   -- number of past query results kept in history; 0 = unlimited
   panel = {
     width = 30,  -- columns for the side panel
   },
@@ -42,7 +43,8 @@ local M = {
       -- Items: "pagination" | "query_time" | "connection" | "binds_file"
       -- sep defaults to "  ·  " for non-first visible items
       sections = {
-        { "pagination" },
+        { "history" },
+        { "pagination", sep = "  " },
         { "query_time", sep = "  —  " },
         { "connection", sep = "  ·  " },
       },
@@ -53,7 +55,10 @@ local M = {
       next    = "L",       -- next page (set to "" or false to disable)
       prev    = "H",       -- prev page
       cancel  = "<C-c>",  -- kill in-flight query
-      inspect = "gi",      -- open inspector for current page
+      inspect      = "gi",      -- open inspector for current page
+      history_prev = "[",       -- previous query result in history
+      history_next = "]",       -- next query result in history
+      hover_query  = "K",       -- hover to show the executed query
     },
     editor = {
       binds = "<leader>b",  -- open dblite.binds.json popup

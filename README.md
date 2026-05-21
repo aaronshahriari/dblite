@@ -130,10 +130,19 @@ Running a query from any tab moves the dbout split to that tab. If the result wi
 |---|---|
 | `L` | Next page |
 | `H` | Previous page |
+| `[` | Previous result in history |
+| `]` | Next result in history |
+| `K` | Hover — show the query that produced the current result |
 | `<C-c>` | Cancel in-flight query |
 | `gi` | Inspect current page (full untruncated output) |
 
 `<C-c>` also works from any buffer while a query is running — dblite temporarily sets it globally and restores your original mapping when the query finishes.
+
+### Result History
+
+Every successful query is saved to a history ring. Navigate past results with `[` and `]` — the status line shows `◀ 2/5 ▶` when multiple entries exist. Press `K` to hover the executed SQL (with bind parameters already substituted). The float uses SQL syntax highlighting and auto-dismisses when the cursor moves.
+
+History size is controlled by `max_history` (default `20`). Set to `0` for unlimited.
 
 ### Inspect
 
@@ -305,6 +314,7 @@ require('dblite').setup({
   page_size      = 100,           -- rows per page in the result buffer
   max_rows       = 10000,         -- hard cap on rows returned
   max_col_width  = 50,            -- truncate cells wider than this; 0 = no limit
+  max_history    = 20,            -- past query results to keep; 0 = unlimited
   filetype       = '',            -- filetype for the result buffer ('' = no highlighting)
   flash_timeout  = 2000,          -- ms to hold the query highlight; 0 = hold until results
   json_view      = 'tab',         -- where inspect opens: 'tab' | 'vertical' | 'horizontal' | 'float'
@@ -324,11 +334,12 @@ require('dblite').setup({
     dbout = {
       cursorline = false,   -- highlight the line under the cursor
       -- Status line sections. Each entry: { "item", sep = "…", hl = "HlGroup" }
-      -- Available items: "pagination" | "query_time" | "connection"
+      -- Available items: "history" | "pagination" | "query_time" | "connection"
       -- sep   — separator printed before this item (default "  ·  ")
       -- hl    — highlight group applied to this item's text (optional)
       sections = {
-        { "pagination" },
+        { "history" },
+        { "pagination", sep = "  " },
         { "query_time", sep = "  —  " },
         { "connection", sep = "  ·  " },
       },
@@ -336,10 +347,13 @@ require('dblite').setup({
   },
   keymaps = {
     dbout = {
-      next    = 'L',              -- next page
-      prev    = 'H',              -- previous page
-      cancel  = '<C-c>',          -- cancel in-flight query
-      inspect = 'gi',             -- open inspector for current page
+      next         = 'L',         -- next page
+      prev         = 'H',         -- previous page
+      cancel       = '<C-c>',     -- cancel in-flight query
+      inspect      = 'gi',        -- open inspector for current page
+      history_prev = '[',         -- previous query result in history
+      history_next = ']',         -- next query result in history
+      hover_query  = 'K',         -- hover to show the executed query
     },
     editor = {
       binds = '<leader>b',        -- toggle dblite.binds.json split
