@@ -87,9 +87,14 @@ function M.setup(opts)
   })
 end
 
+local function effective_max_col_width()
+  if state.fullscreen_tab and vim.api.nvim_tabpage_is_valid(state.fullscreen_tab) then return 0 end
+  return config.max_col_width or 0
+end
+
 local function cell(value, width)
   local s = value == vim.NIL and "" or tostring(value)
-  local max = config.max_col_width or 0
+  local max = effective_max_col_width()
   if max > 0 and #s > max then
     s = s:sub(1, max - 1) .. "…"
   end
@@ -101,7 +106,7 @@ end
 
 local function compute_widths(rows, columns)
   local widths = {}
-  local max = config.max_col_width or 0
+  local max = effective_max_col_width()
   for _, col in ipairs(columns) do
     widths[col] = #col
   end
@@ -982,6 +987,9 @@ function M.toggle_fullscreen()
     apply_dbout_win_style(0)
     state.fullscreen_tab = vim.api.nvim_get_current_tabpage()
   end
+  -- Recompute widths (fullscreen disables truncation) and re-render
+  state.widths = compute_widths(state.rows, state.columns)
+  render_page()
 end
 
 vim.api.nvim_create_user_command("DbliteToggleOut", M.toggle_dbout, {})
