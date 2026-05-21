@@ -108,37 +108,29 @@ local function compute_widths(rows, columns)
   return widths
 end
 
-local function render_page()
-  local bufnr = state.result_bufnr
-  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
-
-  local total = #state.rows
-  local page_size = config.page_size or 100
-  local total_pages = math.max(1, math.ceil(total / page_size))
-  if state.page > total_pages then state.page = total_pages end
-  if state.page < 1 then state.page = 1 end
-
-  local start_row = (state.page - 1) * page_size + 1
-  local end_row = math.min(start_row + page_size - 1, total)
-
-  local lines = {}
+-- Shared status-line builder used by render_page, set_cancelled_status, and the spinner.
+-- `overrides` is a table of { item_name = value | nil } that replace the default logic.
+-- Items not in overrides fall back to their normal value.  Returns (status_string, hl_marks).
+local function render_status_line(overrides, cancelled_items)
+  overrides = overrides or {}
+  cancelled_items = cancelled_items or {}
   local dbout_style = (config.style and config.style.dbout) or {}
   local sections = dbout_style.sections or {
-    { "pagination" },
+    { "history" },
+    { "pagination", sep = "  " },
     { "query_time", sep = "  —  " },
     { "connection", sep = "  ·  " },
   }
 
-  local status    = ""
-  local hl_marks  = {}
+  local status   = ""
+  local hl_marks = {}
   local has_items = false
   for _, sec in ipairs(sections) do
     local item = sec[1]
     local value
-    if item == "pagination" then
-      value = total == 0 and "(no rows)" or string.format("(%d/%d)", state.page, total_pages)
-    elseif item == "query_time" then
-      if state.last_elapsed then value = string.format("%.3fs", state.last_elapsed) end
+    if overrides[item] ~= nil then
+      value = overrides[item]  -- explicit override (false = skip)
+      if value == false then value = nil end
     elseif item == "connection" then
       value = state.active_conn and state.active_conn.name or "no connection"
     elseif item == "binds_file" then
@@ -157,10 +149,32 @@ local function render_page()
       end
       local col = #status
       status = status .. value
-      table.insert(hl_marks, { col = col, end_col = #status, hl = sec.hl or "DbliteStatusPage" })
+      local hl = cancelled_items[item] and "DbliteCancelled" or (sec.hl or "DbliteStatusPage")
+      table.insert(hl_marks, { col = col, end_col = #status, hl = hl })
       has_items = true
     end
   end
+  return status, hl_marks
+end
+
+local function render_page()
+  local bufnr = state.result_bufnr
+  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
+
+  local total = #state.rows
+  local page_size = config.page_size or 100
+  local total_pages = math.max(1, math.ceil(total / page_size))
+  if state.page > total_pages then state.page = total_pages end
+  if state.page < 1 then state.page = 1 end
+
+  local start_row = (state.page - 1) * page_size + 1
+  local end_row = math.min(start_row + page_size - 1, total)
+
+  local lines = {}
+  local status, hl_marks = render_status_line({
+    pagination = total == 0 and "(no rows)" or string.format("(%d/%d)", state.page, total_pages),
+    query_time = state.last_elapsed and string.format("%.3fs", state.last_elapsed) or nil,
+  })
   table.insert(lines, status)
   table.insert(lines, "")
 
@@ -227,49 +241,10 @@ end
 local function set_cancelled_status(elapsed)
   local bufnr = state.result_bufnr
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
-  local dbout_style = (config.style and config.style.dbout) or {}
-  local sections = dbout_style.sections or {
-    { "pagination" },
-    { "query_time", sep = "  —  " },
-    { "connection", sep = "  ·  " },
-  }
-
-  local status   = ""
-  local hl_marks = {}
-  local has_items = false
-  for _, sec in ipairs(sections) do
-    local item = sec[1]
-    local value, cancelled_hl
-    if item == "pagination" then
-      value = "cancelled"
-      cancelled_hl = true
-    elseif item == "query_time" then
-      value = string.format("%.3fs", elapsed)
-      cancelled_hl = true
-    elseif item == "connection" then
-      value = state.active_conn and state.active_conn.name or "no connection"
-    elseif item == "binds_file" then
-      if vim.fn.filereadable(binds_file_path()) == 1 then value = "binds" end
-    elseif item == "history" then
-      if #state.history > 1 then
-        value = string.format("◀ %d/%d ▶", state.history_idx, #state.history)
-      end
-    end
-    if value then
-      if has_items then
-        local sep = sec.sep or "  ·  "
-        local sep_col = #status
-        status = status .. sep
-        table.insert(hl_marks, { col = sep_col, end_col = #status, hl = "DbliteStatusPage" })
-      end
-      local col = #status
-      status = status .. value
-      local hl = cancelled_hl and "DbliteCancelled" or (sec.hl or "DbliteStatusPage")
-      table.insert(hl_marks, { col = col, end_col = #status, hl = hl })
-      has_items = true
-    end
-  end
-
+  local status, hl_marks = render_status_line(
+    { pagination = "cancelled", query_time = string.format("%.3fs", elapsed) },
+    { pagination = true, query_time = true }
+  )
   vim.bo[bufnr].modifiable = true
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { status })
   vim.bo[bufnr].modifiable = false
@@ -300,7 +275,18 @@ local function start_spinner()
       return
     end
     local elapsed = (vim.uv.now() - state.spinner_start) / 1000
-    set_status(string.format("%s  %.1fs", SPINNER[idx], elapsed))
+    local bufnr = state.result_bufnr
+    local status, hl_marks = render_status_line({
+      pagination = string.format("%s  %.1fs", SPINNER[idx], elapsed),
+      query_time = false,
+    })
+    vim.bo[bufnr].modifiable = true
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { status })
+    vim.bo[bufnr].modifiable = false
+    vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+    for _, m in ipairs(hl_marks) do
+      vim.api.nvim_buf_set_extmark(bufnr, ns, 0, m.col, { end_col = m.end_col, hl_group = m.hl })
+    end
     idx = (idx % #SPINNER) + 1
   end))
   state.spinner_timer = timer
