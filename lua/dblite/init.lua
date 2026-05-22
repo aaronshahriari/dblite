@@ -94,6 +94,7 @@ end
 
 local function cell(value, width)
   local s = value == vim.NIL and "" or tostring(value)
+  s = s:gsub("\r\n", "\\n"):gsub("\n", "\\n"):gsub("\r", "\\r")
   local max = effective_max_col_width()
   if max > 0 and #s > max then
     s = s:sub(1, max - 1) .. "…"
