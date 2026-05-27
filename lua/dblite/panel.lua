@@ -8,9 +8,10 @@ local _on_edit
 
 local ns = vim.api.nvim_create_namespace("dblite_panel")
 
-vim.api.nvim_set_hl(0, "DblitePanelTitle",  { link = "Title",   default = true })
-vim.api.nvim_set_hl(0, "DblitePanelActive", { link = "String",  default = true })
-vim.api.nvim_set_hl(0, "DblitePanelSep",    { link = "Comment", default = true })
+vim.api.nvim_set_hl(0, "DblitePanelTitle",   { link = "Title",   default = true })
+vim.api.nvim_set_hl(0, "DblitePanelActive",  { link = "String",  default = true })
+vim.api.nvim_set_hl(0, "DblitePanelSep",     { link = "Comment", default = true })
+vim.api.nvim_set_hl(0, "DblitePanelSection", { link = "Type",    default = true })
 
 local state = {
   bufnr      = nil,
@@ -23,6 +24,11 @@ function M.setup(opts)
   _get_state = opts.get_state
   _on_edit   = opts.on_edit
 end
+
+local type_labels = {
+  oracle    = "Oracle",
+  sqlserver = "SQL Server",
+}
 
 local function build_lines()
   local st        = _get_state and _get_state() or {}
@@ -40,19 +46,45 @@ local function build_lines()
   if #conns == 0 then
     table.insert(lines, "  (no connections)")
   else
+    -- group connections by type
+    local groups = {}
+    local order  = {}
     for _, c in ipairs(conns) do
-      local is_active = active ~= nil and active.id == c.id
-      local prefix    = is_active and "  \xe2\x9c\x93 " or "    "  -- ✓ in UTF-8
-      table.insert(lines, prefix .. c.name)
-      local row_1based = #lines
-      line_map[row_1based] = c.name
-      if is_active then
-        table.insert(hls, {
-          row   = row_1based - 1,
-          col   = 0,
-          len   = #lines[row_1based],
-          group = "DblitePanelActive",
-        })
+      local t = c.type or "other"
+      if not groups[t] then
+        groups[t] = {}
+        table.insert(order, t)
+      end
+      table.insert(groups[t], c)
+    end
+
+    for i, t in ipairs(order) do
+      if i > 1 then
+        table.insert(lines, "")  -- blank line between sections
+      end
+      local label = type_labels[t] or t:sub(1, 1):upper() .. t:sub(2)
+      table.insert(lines, "  " .. label)
+      table.insert(hls, {
+        row   = #lines - 1,
+        col   = 0,
+        len   = #lines[#lines],
+        group = "DblitePanelSection",
+      })
+
+      for _, c in ipairs(groups[t]) do
+        local is_active = active ~= nil and active.id == c.id
+        local prefix    = is_active and "    \xe2\x9c\x93 " or "      "  -- ✓ in UTF-8
+        table.insert(lines, prefix .. c.name)
+        local row_1based = #lines
+        line_map[row_1based] = c.name
+        if is_active then
+          table.insert(hls, {
+            row   = row_1based - 1,
+            col   = 0,
+            len   = #lines[row_1based],
+            group = "DblitePanelActive",
+          })
+        end
       end
     end
   end
