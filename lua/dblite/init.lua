@@ -83,6 +83,10 @@ function M.setup(opts)
         vim.keymap.set("n", ek.fullscreen, function() M.toggle_fullscreen() end,
           { buffer = buf, silent = true, desc = "dblite: toggle dbout fullscreen" })
       end
+      if ek.hover_bind and ek.hover_bind ~= "" then
+        vim.keymap.set("n", ek.hover_bind, function() M.hover_bind() end,
+          { buffer = buf, silent = true, desc = "dblite: hover bind value" })
+      end
     end,
   })
 end
@@ -1307,6 +1311,38 @@ end
 
 function M.get_flat_binds()
   return flatten_binds(load_binds_file())
+end
+
+function M.hover_bind()
+  local line = vim.api.nvim_get_current_line()
+  local col  = vim.api.nvim_win_get_cursor(0)[2] + 1  -- 1-based
+
+  -- find the :bind token surrounding the cursor
+  local s, e, name
+  local pos = 1
+  while true do
+    s, e, name = line:find(":([a-zA-Z_][a-zA-Z0-9_.]*)", pos)
+    if not s then break end
+    if col >= s and col <= e then break end
+    pos = e + 1
+    name = nil
+  end
+  if not name then return end
+  name = name:gsub("%.+$", "")
+
+  local binds = flatten_binds(load_binds_file())
+  local val   = binds[name]
+  if val == nil then
+    vim.lsp.util.open_floating_preview(
+      { ":" .. name, "", "(not set)" }, "",
+      { border = "rounded", focus_id = "dblite_bind_hover" })
+    return
+  end
+
+  local display = format_bind_value(val)
+  vim.lsp.util.open_floating_preview(
+    { ":" .. name, "", display }, "sql",
+    { border = "rounded", focus_id = "dblite_bind_hover" })
 end
 
 return M

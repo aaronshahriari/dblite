@@ -65,6 +65,7 @@ local M = {
     editor = {
       binds      = "<leader>b",  -- open dblite.binds.json popup
       fullscreen = "<leader>l",  -- toggle dbout fullscreen
+      hover_bind = "K",          -- hover to show bind value under cursor
     },
     panel = {    -- keymaps active inside the connections panel
       select = "<CR>", -- activate connection under cursor
