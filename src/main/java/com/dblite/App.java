@@ -50,38 +50,45 @@ public class App {
 
             if (maxRows > 0) stmt.setMaxRows(maxRows);
 
-            try (ResultSet rs = stmt.executeQuery(query)) {
-                ResultSetMetaData meta = rs.getMetaData();
-                int columnCount = meta.getColumnCount();
+            boolean hasResultSet = stmt.execute(query);
 
-                System.out.print("{\"columns\": [");
-                for (int i = 1; i <= columnCount; i++) {
-                    if (i > 1) System.out.print(", ");
-                    System.out.print("\"" + escape(meta.getColumnLabel(i)) + "\"");
-                }
-                System.out.println("],");
-                System.out.print("\"column_types\": [");
-                for (int i = 1; i <= columnCount; i++) {
-                    if (i > 1) System.out.print(", ");
-                    System.out.print("\"" + escape(meta.getColumnTypeName(i)) + "\"");
-                }
-                System.out.println("],");
-                System.out.println("\"rows\": [");
+            if (hasResultSet) {
+                try (ResultSet rs = stmt.getResultSet()) {
+                    ResultSetMetaData meta = rs.getMetaData();
+                    int columnCount = meta.getColumnCount();
 
-                int rowCount = 0;
-                while (rs.next()) {
-                    if (rowCount > 0) System.out.println(",");
-                    System.out.print("  {");
+                    System.out.print("{\"columns\": [");
                     for (int i = 1; i <= columnCount; i++) {
                         if (i > 1) System.out.print(", ");
-                        System.out.print("\"" + escape(meta.getColumnLabel(i)) + "\": ");
-                        System.out.print(formatValue(rs, i, meta.getColumnType(i)));
+                        System.out.print("\"" + escape(meta.getColumnLabel(i)) + "\"");
                     }
-                    System.out.print("}");
-                    rowCount++;
+                    System.out.println("],");
+                    System.out.print("\"column_types\": [");
+                    for (int i = 1; i <= columnCount; i++) {
+                        if (i > 1) System.out.print(", ");
+                        System.out.print("\"" + escape(meta.getColumnTypeName(i)) + "\"");
+                    }
+                    System.out.println("],");
+                    System.out.println("\"rows\": [");
+
+                    int rowCount = 0;
+                    while (rs.next()) {
+                        if (rowCount > 0) System.out.println(",");
+                        System.out.print("  {");
+                        for (int i = 1; i <= columnCount; i++) {
+                            if (i > 1) System.out.print(", ");
+                            System.out.print("\"" + escape(meta.getColumnLabel(i)) + "\": ");
+                            System.out.print(formatValue(rs, i, meta.getColumnType(i)));
+                        }
+                        System.out.print("}");
+                        rowCount++;
+                    }
+                    System.out.println();
+                    System.out.println("]}");
                 }
-                System.out.println();
-                System.out.println("]}");
+            } else {
+                int updateCount = stmt.getUpdateCount();
+                System.out.println("{\"update_count\": " + updateCount + "}");
             }
         } catch (Exception e) {
             System.err.println("Connection failed: " + e.getMessage());

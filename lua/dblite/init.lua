@@ -273,6 +273,14 @@ local function render_page()
   end
 end
 
+local function set_status(text)
+  local bufnr = state.result_bufnr
+  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { text })
+  vim.bo[bufnr].modifiable = false
+end
+
 local function restore_history(idx)
   if idx < 1 or idx > #state.history then return end
   local entry = state.history[idx]
@@ -284,15 +292,12 @@ local function restore_history(idx)
   state.raw_json     = entry.raw_json
   state.last_elapsed = entry.last_elapsed
   state.page         = 1
-  render_page()
-end
-
-local function set_status(text)
-  local bufnr = state.result_bufnr
-  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
-  vim.bo[bufnr].modifiable = true
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { text })
-  vim.bo[bufnr].modifiable = false
+  if entry.update_count then
+    local msg = string.format("-- %d row(s) affected  (%.2fs)", entry.update_count, entry.last_elapsed)
+    set_status(msg)
+  else
+    render_page()
+  end
 end
 
 local function set_cancelled_status(elapsed)
@@ -672,6 +677,34 @@ local function execute_core(query)
       local ok, parsed = pcall(vim.json.decode, result.stdout)
       if not ok or type(parsed) ~= "table" then
         set_status("-- dblite: failed to parse JSON: " .. tostring(parsed))
+        return
+      end
+
+      if parsed.update_count ~= nil then
+        local uc = parsed.update_count
+        local msg
+        if uc < 0 then
+          msg = string.format("-- statement executed  (%.2fs)", elapsed)
+        else
+          msg = string.format("-- %d row(s) affected  (%.2fs)", uc, elapsed)
+        end
+        set_status(msg)
+        local max_hist = config.max_history or 20
+        table.insert(state.history, {
+          columns      = {},
+          column_types = {},
+          rows         = {},
+          widths       = {},
+          raw_json     = result.stdout,
+          last_elapsed = elapsed,
+          conn_name    = state.active_conn and state.active_conn.name or nil,
+          query_text   = q,
+          update_count = parsed.update_count,
+        })
+        if max_hist > 0 and #state.history > max_hist then
+          table.remove(state.history, 1)
+        end
+        state.history_idx = #state.history
         return
       end
 
