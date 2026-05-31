@@ -50,12 +50,16 @@ end
 -- Saves a new connection.
 -- Oracle required fields: name, host, user, service. Port defaults to 1521.
 -- SQL Server required fields: name, host, user, database. Port defaults to 1433.
+-- SQL Server with auth="kerberos": user/password are optional.
 -- type defaults to "oracle" when omitted (backward compat).
 function M.add(conn)
-  local t = conn.type or "oracle"
+  local t    = conn.type or "oracle"
+  local auth = conn.auth or "sql"
   assert(type(conn.name) == "string" and conn.name ~= "", "dblite: name is required")
   assert(type(conn.host) == "string" and conn.host ~= "", "dblite: host is required")
-  assert(type(conn.user) == "string" and conn.user ~= "", "dblite: user is required")
+  if auth ~= "kerberos" then
+    assert(type(conn.user) == "string" and conn.user ~= "", "dblite: user is required")
+  end
   if t == "sqlserver" then
     assert(type(conn.database) == "string" and conn.database ~= "", "dblite: database is required")
   else
@@ -75,9 +79,10 @@ function M.add(conn)
     id       = gen_id(),
     name     = conn.name,
     type     = t,
+    auth     = auth ~= "sql" and auth or nil,
     host     = conn.host,
     port     = tonumber(conn.port) or default_port,
-    user     = conn.user,
+    user     = conn.user or "",
     password = conn.password or "",
   }
   if t == "sqlserver" then
@@ -191,9 +196,13 @@ end
 function M.jdbc_url(conn)
   local t = conn.type or "oracle"
   if t == "sqlserver" then
-    return string.format(
+    local url = string.format(
       "jdbc:sqlserver://%s:%d;databaseName=%s;encrypt=true;trustServerCertificate=true",
       conn.host, tonumber(conn.port) or 1433, conn.database)
+    if conn.auth == "kerberos" then
+      url = url .. ";integratedSecurity=true;authenticationScheme=JavaKerberos"
+    end
+    return url
   end
   return string.format(
     "jdbc:oracle:thin:@%s:%d/%s",

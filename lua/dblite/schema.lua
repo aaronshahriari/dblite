@@ -82,11 +82,13 @@ function M.get(conn, callback)
     {
       stdin = sql,
       text  = true,
-      env   = {
-        DB_URL      = connections.jdbc_url(conn),
-        DB_USER     = expand_env(conn.user),
-        DB_PASSWORD = expand_env(conn.password or ""),
-      },
+      env   = conn.auth == "kerberos"
+        and { DB_URL = connections.jdbc_url(conn) }
+        or  {
+          DB_URL      = connections.jdbc_url(conn),
+          DB_USER     = expand_env(conn.user),
+          DB_PASSWORD = expand_env(conn.password or ""),
+        },
     },
     function(result)
       vim.schedule(function()

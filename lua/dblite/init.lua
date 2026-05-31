@@ -641,11 +641,11 @@ local function execute_core(query)
   end
 
   local c = state.active_conn
-  local sys_env = {
-    DB_URL      = connections.jdbc_url(c),
-    DB_USER     = expand_env(c.user),
-    DB_PASSWORD = expand_env(c.password or ""),
-  }
+  local sys_env = { DB_URL = connections.jdbc_url(c) }
+  if c.auth ~= "kerberos" then
+    sys_env.DB_USER     = expand_env(c.user)
+    sys_env.DB_PASSWORD = expand_env(c.password or "")
+  end
 
   set_global_cancel_keymap()
 

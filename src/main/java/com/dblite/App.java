@@ -13,9 +13,14 @@ public class App {
         String user = System.getenv("DB_USER");
         String password = System.getenv("DB_PASSWORD");
 
-        if (url == null || user == null || password == null) {
-            System.err.println("Missing required env vars: DB_URL, DB_USER, DB_PASSWORD");
+        if (url == null) {
+            System.err.println("Missing required env var: DB_URL");
             System.err.println("Example DB_URL: jdbc:oracle:thin:@//localhost:1521/XEPDB1  or  jdbc:sqlserver://localhost:1433;databaseName=MyDB");
+            System.exit(1);
+        }
+        boolean integratedAuth = url.toLowerCase().contains("integratedsecurity=true");
+        if (!integratedAuth && (user == null || password == null)) {
+            System.err.println("Missing required env vars: DB_USER, DB_PASSWORD (not required for integratedSecurity=true)");
             System.exit(1);
         }
 
@@ -45,7 +50,9 @@ public class App {
             System.exit(1);
         }
 
-        try (Connection conn = DriverManager.getConnection(url, user, password);
+        try (Connection conn = integratedAuth
+                 ? DriverManager.getConnection(url)
+                 : DriverManager.getConnection(url, user, password);
              Statement stmt = conn.createStatement()) {
 
             if (maxRows > 0) stmt.setMaxRows(maxRows);
