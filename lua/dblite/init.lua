@@ -1118,7 +1118,8 @@ function M.inspect(format)
     end
     local function csv_escape(val)
       local s = (val == nil or val == vim.NIL) and "" or tostring(val)
-      if s:find('[,"\n\r]') then s = '"' .. s:gsub('"', '""') .. '"' end
+      s = s:gsub("\r\n", "\\n"):gsub("\n", "\\n"):gsub("\r", "\\n")
+      if s:find('[,"]') then s = '"' .. s:gsub('"', '""') .. '"' end
       return s
     end
     table.insert(lines, table.concat(vim.tbl_map(csv_escape, state.columns), ","))
