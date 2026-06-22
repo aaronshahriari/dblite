@@ -116,4 +116,11 @@ end
 function M.invalidate(conn_id) _cache[conn_id] = nil end
 function M.prefetch(conn) M.get(conn, function() end) end
 
+-- Synchronous, non-blocking peek at the cache. Returns the schema if it's
+-- already warm, otherwise nil — never kicks off a fetch.
+function M.peek(conn)
+  local e = _cache[conn.id]
+  return e and e.schema or nil
+end
+
 return M

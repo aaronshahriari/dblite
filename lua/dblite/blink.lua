@@ -116,32 +116,35 @@ function source:get_completions(ctx, callback)
       callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = {} })
       return
     end
-    schema.get(conn, function(sch)
-      local items = {}
-      if sch then
-        for _, owner in ipairs(sch.owners) do
-          for _, tname in ipairs(sch.owner_tables[owner] or {}) do
-            local fqn = owner .. "." .. tname
-            for _, col in ipairs(sch.columns[fqn] or {}) do
-              local key = tname:lower() .. "." .. col.name:lower()
-              table.insert(items, {
-                label      = key,
-                kind       = KIND.Field,
-                detail     = col.type,
-                insertText = key,
-              })
-            end
+    -- Non-blocking: emit columns only if the schema cache is already warm.
+    -- While it's still fetching, return incomplete so blink re-queries until
+    -- the catalog query lands — no dead window waiting on the DB.
+    local sch = schema.peek(conn)
+    if not sch then schema.prefetch(conn) end
+    local items = {}
+    if sch then
+      for _, owner in ipairs(sch.owners) do
+        for _, tname in ipairs(sch.owner_tables[owner] or {}) do
+          local fqn = owner .. "." .. tname
+          for _, col in ipairs(sch.columns[fqn] or {}) do
+            local key = tname:lower() .. "." .. col.name:lower()
             table.insert(items, {
-              label      = tname:lower(),
-              kind       = KIND.Class,
-              detail     = owner,
-              insertText = tname:lower(),
+              label      = key,
+              kind       = KIND.Field,
+              detail     = col.type,
+              insertText = key,
             })
           end
+          table.insert(items, {
+            label      = tname:lower(),
+            kind       = KIND.Class,
+            detail     = owner,
+            insertText = tname:lower(),
+          })
         end
       end
-      callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
-    end)
+    end
+    callback({ is_incomplete_forward = (sch == nil), is_incomplete_backward = false, items = items })
     return
   end
 
@@ -156,160 +159,168 @@ function source:get_completions(ctx, callback)
     return
   end
 
-  schema.get(conn, function(sch)
-    -- Build query-context columns and alias map from the current buffer.
-    local qcols, fqn_map = query_context(ctx.bufnr, sch)
-
-    -- ── `:param` — existing bind keys + column suggestions ───────────────
-    local after_colon = (ctx.trigger and ctx.trigger.character == ":")
-                     or line:match(":[a-zA-Z_][a-zA-Z0-9_.]*$") ~= nil
-    if after_colon then
-      local items = {}
-      local flat = db.get_flat_binds()
-      for key, val in pairs(flat) do
-        local detail
-        if val == vim.NIL then
-          detail = "null"
-        elseif type(val) == "string" then
-          detail = val:sub(1, 1) == "~" and val:sub(2) or ('"' .. val .. '"')
-        else
-          detail = tostring(val)
-        end
-        table.insert(items, { label = key, kind = KIND.Variable, detail = detail, insertText = key })
+  -- ── `:param` — bind keys are local (read from a file), so respond ────
+  -- instantly. Column suggestions are a bonus: include them only if the
+  -- schema cache is already warm, and mark the result incomplete while it
+  -- isn't so blink re-queries and upgrades once the catalog query lands.
+  local after_colon = (ctx.trigger and ctx.trigger.character == ":")
+                   or line:match(":[a-zA-Z_][a-zA-Z0-9_.]*$") ~= nil
+  if after_colon then
+    local sch = schema.peek(conn)
+    if not sch then schema.prefetch(conn) end
+    local items = {}
+    local flat = db.get_flat_binds()
+    for key, val in pairs(flat) do
+      local detail
+      if val == vim.NIL then
+        detail = "null"
+      elseif type(val) == "string" then
+        detail = val:sub(1, 1) == "~" and val:sub(2) or ('"' .. val .. '"')
+      else
+        detail = tostring(val)
       end
-      if sch then
-        local seen_col = {}
-        for _, owner in ipairs(sch.owners) do
-          for _, tname in ipairs(sch.owner_tables[owner] or {}) do
-            local fqn = owner .. "." .. tname
-            for _, col in ipairs(sch.columns[fqn] or {}) do
-              local dotted = tname:lower() .. "." .. col.name:lower()
-              if not seen_col[dotted] then
-                seen_col[dotted] = true
-                table.insert(items, { label = dotted, kind = KIND.Field, detail = col.type })
-              end
-              if not seen_col[col.name] then
-                seen_col[col.name] = true
-                table.insert(items, { label = col.name, kind = KIND.Field, detail = col.type })
-              end
+      table.insert(items, { label = key, kind = KIND.Variable, detail = detail, insertText = key })
+    end
+    if sch then
+      local seen_col = {}
+      for _, owner in ipairs(sch.owners) do
+        for _, tname in ipairs(sch.owner_tables[owner] or {}) do
+          local fqn = owner .. "." .. tname
+          for _, col in ipairs(sch.columns[fqn] or {}) do
+            local dotted = tname:lower() .. "." .. col.name:lower()
+            if not seen_col[dotted] then
+              seen_col[dotted] = true
+              table.insert(items, { label = dotted, kind = KIND.Field, detail = col.type })
+            end
+            if not seen_col[col.name] then
+              seen_col[col.name] = true
+              table.insert(items, { label = col.name, kind = KIND.Field, detail = col.type })
             end
           end
         end
       end
+    end
+    callback({ is_incomplete_forward = (sch == nil), is_incomplete_backward = false, items = items })
+    return
+  end
+
+  -- Everything below needs the schema. Peek the cache instead of blocking on
+  -- the catalog query; while it's still warming, return keywords + incomplete
+  -- so blink keeps re-querying and upgrades to full completions once it lands.
+  local sch = schema.peek(conn)
+  if not sch then
+    schema.prefetch(conn)
+    callback({ is_incomplete_forward = true, is_incomplete_backward = false, items = kw_items })
+    return
+  end
+
+  -- Build query-context columns and alias map from the current buffer.
+  local qcols, fqn_map = query_context(ctx.bufnr, sch)
+
+  -- ── owner.table. — column completions (explicit two-level dot) ───────
+  local dot2_owner, dot2_table = line:match("([%w_]+)%.([%w_]+)%.$")
+  if dot2_owner then
+    local fqn  = dot2_owner:upper() .. "." .. dot2_table:upper()
+    local cols = sch.columns[fqn]
+    local items = {}
+    if cols then
+      for _, col in ipairs(cols) do
+        table.insert(items, { label = col.name, kind = KIND.Field, detail = col.type })
+      end
+    end
+    if #items == 0 then items = kw_items end
+    callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
+    return
+  end
+
+  -- ── word. — owner (→ tables) OR table/alias (→ columns) ─────────────
+  local after_dot = line:match("([%w_]+)%.$")
+  if after_dot then
+    local upper = after_dot:upper()
+
+    -- Is it an owner/schema?
+    local owner_tables = sch.owner_tables[upper]
+    if owner_tables then
+      local items = {}
+      for _, tname in ipairs(owner_tables) do
+        table.insert(items, { label = tname, kind = KIND.Class, detail = upper })
+      end
       callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
       return
     end
 
-    if not sch then
-      callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = kw_items })
-      return
-    end
-
-    -- ── owner.table. — column completions (explicit two-level dot) ───────
-    local dot2_owner, dot2_table = line:match("([%w_]+)%.([%w_]+)%.$")
-    if dot2_owner then
-      local fqn  = dot2_owner:upper() .. "." .. dot2_table:upper()
+    -- Is it a table name or alias referenced in this query?
+    local fqn = fqn_map[upper]
+    if fqn then
       local cols = sch.columns[fqn]
-      local items = {}
       if cols then
+        local items = {}
         for _, col in ipairs(cols) do
           table.insert(items, { label = col.name, kind = KIND.Field, detail = col.type })
-        end
-      end
-      if #items == 0 then items = kw_items end
-      callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
-      return
-    end
-
-    -- ── word. — owner (→ tables) OR table/alias (→ columns) ─────────────
-    local after_dot = line:match("([%w_]+)%.$")
-    if after_dot then
-      local upper = after_dot:upper()
-
-      -- Is it an owner/schema?
-      local owner_tables = sch.owner_tables[upper]
-      if owner_tables then
-        local items = {}
-        for _, tname in ipairs(owner_tables) do
-          table.insert(items, { label = tname, kind = KIND.Class, detail = upper })
         end
         callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
         return
       end
-
-      -- Is it a table name or alias referenced in this query?
-      local fqn = fqn_map[upper]
-      if fqn then
-        local cols = sch.columns[fqn]
-        if cols then
-          local items = {}
-          for _, col in ipairs(cols) do
-            table.insert(items, { label = col.name, kind = KIND.Field, detail = col.type })
-          end
-          callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
-          return
-        end
-      end
-
-      -- Unknown word before dot — fall through to general context
     end
 
-    -- ── after FROM / JOIN / INTO / UPDATE — owner names first ────────────
-    local after_kw = line:match("[Ff][Rr][Oo][Mm]%s+$")
-                  or line:match("[Jj][Oo][Ii][Nn]%s+$")
-                  or line:match("[Ii][Nn][Tt][Oo]%s+$")
-                  or line:match("[Uu][Pp][Dd][Aa][Tt][Ee]%s+$")
-    if after_kw then
-      local items = {}
-      for _, o in ipairs(sch.owners) do
-        local n = sch.owner_tables[o] and #sch.owner_tables[o] or 0
-        table.insert(items, { label = o, kind = KIND.Module, detail = n .. " tables" })
-      end
-      vim.list_extend(items, kw_items)
-      callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
-      return
-    end
+    -- Unknown word before dot — fall through to general context
+  end
 
-    -- ── after SELECT / WHERE / AND / OR / SET / ON — columns first ───────
-    local after_clause = line:match("[Ss][Ee][Ll][Ee][Cc][Tt]%s+$")
-                      or line:match("[Ss][Ee][Ll][Ee][Cc][Tt]%s+.-%,%s*$")
-                      or line:match("[Ww][Hh][Ee][Rr][Ee]%s+$")
-                      or line:match("[Aa][Nn][Dd]%s+$")
-                      or line:match("[Oo][Rr]%s+$")
-                      or line:match("[Ss][Ee][Tt]%s+$")
-                      or line:match("[Oo][Nn]%s+$")
-    if after_clause and #qcols > 0 then
-      local items = {}
-      for _, col in ipairs(qcols) do
-        table.insert(items, {
-          label        = col.name,
-          kind         = KIND.Field,
-          detail       = col.type .. "  " .. col.src,
-          score_offset = 5,
-        })
-      end
-      vim.list_extend(items, kw_items)
-      callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
-      return
+  -- ── after FROM / JOIN / INTO / UPDATE — owner names first ────────────
+  local after_kw = line:match("[Ff][Rr][Oo][Mm]%s+$")
+                or line:match("[Jj][Oo][Ii][Nn]%s+$")
+                or line:match("[Ii][Nn][Tt][Oo]%s+$")
+                or line:match("[Uu][Pp][Dd][Aa][Tt][Ee]%s+$")
+  if after_kw then
+    local items = {}
+    for _, o in ipairs(sch.owners) do
+      local n = sch.owner_tables[o] and #sch.owner_tables[o] or 0
+      table.insert(items, { label = o, kind = KIND.Module, detail = n .. " tables" })
     end
+    vim.list_extend(items, kw_items)
+    callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
+    return
+  end
 
-    -- ── general — query columns first, then owners + keywords ────────────
+  -- ── after SELECT / WHERE / AND / OR / SET / ON — columns first ───────
+  local after_clause = line:match("[Ss][Ee][Ll][Ee][Cc][Tt]%s+$")
+                    or line:match("[Ss][Ee][Ll][Ee][Cc][Tt]%s+.-%,%s*$")
+                    or line:match("[Ww][Hh][Ee][Rr][Ee]%s+$")
+                    or line:match("[Aa][Nn][Dd]%s+$")
+                    or line:match("[Oo][Rr]%s+$")
+                    or line:match("[Ss][Ee][Tt]%s+$")
+                    or line:match("[Oo][Nn]%s+$")
+  if after_clause and #qcols > 0 then
     local items = {}
     for _, col in ipairs(qcols) do
       table.insert(items, {
         label        = col.name,
         kind         = KIND.Field,
         detail       = col.type .. "  " .. col.src,
-        score_offset = 3,
+        score_offset = 5,
       })
     end
     vim.list_extend(items, kw_items)
-    for _, o in ipairs(sch.owners) do
-      local n = sch.owner_tables[o] and #sch.owner_tables[o] or 0
-      table.insert(items, { label = o, kind = KIND.Module, detail = n .. " tables" })
-    end
     callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
-  end)
+    return
+  end
+
+  -- ── general — query columns first, then owners + keywords ────────────
+  local items = {}
+  for _, col in ipairs(qcols) do
+    table.insert(items, {
+      label        = col.name,
+      kind         = KIND.Field,
+      detail       = col.type .. "  " .. col.src,
+      score_offset = 3,
+    })
+  end
+  vim.list_extend(items, kw_items)
+  for _, o in ipairs(sch.owners) do
+    local n = sch.owner_tables[o] and #sch.owner_tables[o] or 0
+    table.insert(items, { label = o, kind = KIND.Module, detail = n .. " tables" })
+  end
+  callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
 end
 
 return source
