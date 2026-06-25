@@ -1,0 +1,522 @@
+*dblite.txt*	Query Oracle and SQL Server databases from Neovim
+
+Author:  Aaron Shahriari
+License: see repository
+
+==============================================================================
+CONTENTS						*dblite* *dblite.nvim*
+
+	1. Introduction ................. |dblite-introduction|
+	2. Requirements ................. |dblite-requirements|
+	3. Installation ................. |dblite-installation|
+	4. Quick start .................. |dblite-quickstart|
+	5. Connections .................. |dblite-connections|
+	6. Connections panel ............ |dblite-panel|
+	7. Running queries .............. |dblite-queries|
+	8. Result buffer (dbout) ........ |dblite-dbout|
+	9. Result history ............... |dblite-history|
+	10. Column types ................ |dblite-column-types|
+	11. Inspect ..................... |dblite-inspect|
+	12. Bind parameters ............. |dblite-binds|
+	13. Autocomplete ................ |dblite-completion|
+	14. Commands .................... |dblite-commands|
+	15. Keymaps ..................... |dblite-keymaps|
+	16. Configuration ............... |dblite-config|
+	17. Lua API ..................... |dblite-api|
+	18. Highlights .................. |dblite-highlights|
+
+==============================================================================
+1. INTRODUCTION						*dblite-introduction*
+
+dblite.nvim lets you write SQL in any buffer, run it, and view paginated
+results in a split. It manages named connections (with environment-variable
+support for credentials), navigates a history of past results, substitutes
+bind parameters, and offers context-aware SQL completion via blink.cmp.
+
+Supported databases: Oracle and SQL Server.
+
+Queries are executed by a native helper binary (`dblite`) that ships with the
+plugin or is downloaded from GitHub Releases. Queries run asynchronously, so
+Neovim never blocks while a query is in flight; you can cancel with |CTRL-C|.
+
+==============================================================================
+2. REQUIREMENTS						*dblite-requirements*
+
+- Neovim 0.10+ (uses `vim.system`, `vim.uv`).
+- The `dblite` native binary. Installed automatically (see
+  |dblite-installation|) or built with |:DbliteBuild|.
+- Optional: `jq` on PATH for pretty-printed JSON in |dblite-inspect|.
+- Optional: blink.cmp for |dblite-completion|.
+
+==============================================================================
+3. INSTALLATION						*dblite-installation*
+
+On install, dblite downloads a pre-built native binary from GitHub Releases.
+If no binary matches your platform it falls back to building from source
+(requires GraalVM `native-image`). If the binary is missing at query time,
+run |:DbliteBuild|.
+
+vim.pack (Neovim 0.11+) ~
+
+Register the PackChanged hook BEFORE `vim.pack.add()` so the binary is fetched
+on install and update: >lua
+	vim.api.nvim_create_autocmd('PackChanged', {
+	  callback = function(ev)
+	    local name, kind = ev.data.spec.name, ev.data.kind
+	    if name == 'dblite' and (kind == 'install' or kind == 'update') then
+	      require('dblite.download').download_or_build()
+	    end
+	  end,
+	})
+
+	vim.pack.add({
+	  { src = 'https://github.com/aaronshahriari/dblite.nvim' },
+	})
+
+	require('dblite').setup()
+<
+lazy.nvim ~
+
+The plugin ships a `build.lua` that lazy.nvim picks up automatically; no
+`build =` key is needed. >lua
+	{
+	  'aaronshahriari/dblite.nvim',
+	  config = function()
+	    require('dblite').setup()
+	  end,
+	}
+<
+After install you MUST call `require('dblite').setup()` once. Passing a table
+of options is optional; see |dblite-config|.
+
+==============================================================================
+4. QUICK START						*dblite-quickstart*
+
+	1. Add a connection:
+	   `:DbliteAddConn oracle://system:oracle@localhost:1521/XEPDB1`
+
+	2. Make it active:
+	   `:DbliteUseConn <name>`  (or pick it in the panel, |dblite-panel|)
+
+	3. Open a SQL buffer, type a query, and run it:
+	   `:Dblite run`        run the whole buffer
+	   `:Dblite run at`     run the statement under the cursor
+
+	4. View results in the dbout split. Page with `L` / `H`,
+	   inspect with `gi`, toggle column types with `d`. See |dblite-dbout|.
+
+==============================================================================
+5. CONNECTIONS						*dblite-connections*
+
+Connections are stored at: >
+	~/.local/share/nvim/dblite/connections.json    (chmod 600)
+<
+Passwords may be stored as `$ENV_VAR` references and are expanded from the
+shell environment at query time, so secrets never need to be written to disk.
+
+Commands: |:DbliteAddConn| |:DbliteListConns| |:DbliteUseConn|
+|:DbliteEditConn| |:DbliteDeleteConn|. The unified |:Dblite| entry point
+mirrors these as `:Dblite conn add|list|use|edit|del|file`. All commands that
+take a connection name support tab-completion.
+
+URI formats ~
+>
+	oracle://user[:password]@host[:port]/service
+	sqlserver://user[:password]@host[:port]/database
+<
+Port defaults to 1521 for Oracle and 1433 for SQL Server when omitted.
+SQL Server connections use `encrypt=true;trustServerCertificate=true` for
+broad compatibility with local dev and Azure SQL.
+
+You can also edit the raw JSON directly with `:Dblite conn file`. Saving the
+file refreshes the panel and re-prefetches the active connection's schema.
+
+==============================================================================
+6. CONNECTIONS PANEL					*dblite-panel*
+
+|:DblitePanel| toggles a side panel listing all saved connections. The active
+connection is marked with `✓`; switching takes effect immediately for the
+next query.
+
+Panel keymaps (configurable via `keymaps.panel`, see |dblite-config|):
+
+	`<CR>`	Activate the connection under the cursor
+	`cw`	Edit the connection under the cursor
+	`q`	Close the panel
+
+==============================================================================
+7. RUNNING QUERIES					*dblite-queries*
+
+Set an active connection (|:DbliteUseConn| or the panel), then run:
+
+	`:Dblite run`	   Run the entire buffer as one SQL query.
+	`:Dblite run at`   Run the statement under the cursor (treesitter-aware).
+
+The statement under the cursor is highlighted briefly when run; the flash
+clears after `flash_timeout` ms (see |dblite-config|).
+
+Trailing semicolons are stripped automatically — write SQL however feels
+natural. DML statements (INSERT/UPDATE/DELETE) and COMMIT are supported; for
+those, the status line reports the affected row count instead of a result
+grid.
+
+Running a query from any tab moves the dbout split to that tab. If the result
+window was open in another tab it is closed there first.
+
+`max_rows` caps the number of rows returned (default 10000). Results are
+paginated in the dbout buffer at `page_size` rows per page (default 100).
+
+==============================================================================
+8. RESULT BUFFER (dbout)				*dblite-dbout*
+
+Query output appears in a scratch buffer called the "dbout". Its split
+direction and size are controlled by `split_dir` and `split_size`
+(see |dblite-config|). Toggle its visibility any time with
+|:DbliteToggleOut| or `:Dblite toggle dbout` — an in-flight query keeps
+running while hidden.
+
+The first line is a status line whose sections are configurable via
+`style.dbout.sections`. Available items: "history", "pagination",
+"query_time", "connection", "binds_file".
+
+Default dbout keymaps (configurable via `keymaps.dbout`, see |dblite-config|):
+
+	`L`		Next page			    *dblite_L*
+	`H`		Previous page			    *dblite_H*
+	`[`		Previous result in history	    *dblite_[*
+	`]`		Next result in history		    *dblite_]*
+	`K`		Hover: show the query that produced *dblite_K*
+			this result
+	`d`		Toggle column type annotations	    *dblite_d*
+	`gi`		Inspect current page (untruncated)  *dblite_gi*
+	`<leader>l`	Toggle dbout fullscreen		    *dblite_fullscreen*
+	`<C-c>`		Cancel the in-flight query	    *dblite_CTRL-C*
+
+`<C-c>` also works from any buffer while a query is running: dblite installs
+it globally for the duration of the query and restores your original mapping
+when the query finishes.
+
+Fullscreen (`<leader>l`) opens the dbout in a new tab and disables cell
+truncation so wide values are fully visible; press it again to close the tab
+and return.
+
+==============================================================================
+9. RESULT HISTORY					*dblite-history*
+
+Every successful query is saved to a history ring. Navigate past results from
+inside the dbout buffer:
+
+	`[`	Previous result in history
+	`]`	Next result in history
+
+When more than one entry exists, the status line shows `◀ 2/5 ▶`. Press `K`
+to hover the executed SQL (bind parameters already substituted); the float
+uses SQL highlighting and dismisses when the cursor moves.
+
+History size is controlled by `max_history` (default 20). Set it to 0 for
+unlimited.
+
+==============================================================================
+10. COLUMN TYPES					*dblite-column-types*
+
+Press `d` in the dbout buffer to toggle column type annotations. When enabled,
+each header shows the database type next to the column name: >
+	EMPLOYEE_ID [NUMBER] | FIRST_NAME [VARCHAR2] | HIRE_DATE [DATE]
+	--------------------+-----------------------+------------------
+<
+Show types by default with `show_column_types = true`. The default keymap is
+`d`, remappable via `keymaps.dbout.toggle_types`. Annotations use the
+|hl-DbliteColumnType| group (links to |hl-Comment| by default); override it
+with `vim.api.nvim_set_hl()` or `style.dbout.column_type_hl`. >lua
+	require('dblite').setup({
+	  show_column_types = true,
+	  style = { dbout = { column_type_hl = 'Comment' } },
+	})
+<
+==============================================================================
+11. INSPECT						*dblite-inspect*
+
+`gi` (or `:Dblite inspect`) opens the current result page in a scratch window
+with no column truncation. Three formats — tab-complete
+`:Dblite inspect <Tab>` to pick:
+
+	json	Pretty-printed JSON via `jq` (raw fallback if jq is absent).
+	table	Same layout as dbout, widths fit actual content.
+	csv	RFC-4180 escaped, ready to paste.
+
+The default format is `inspect_format` (default "json"). The scratch window
+opens according to `json_view` (default "tab"; also "vertical",
+"horizontal", "float"). Press `q` to close it.
+
+For json, `inspect_expand_json` (default true) decodes cell values that are
+themselves JSON strings so they nest cleanly instead of showing one escaped
+blob.
+
+==============================================================================
+12. BIND PARAMETERS					*dblite-binds*
+
+Bind parameters are referenced in SQL with a leading colon, e.g. `:status`,
+`:user_id`. Their values come from a `dblite.binds.json` file in the current
+working directory. Open/create it with `:Dblite binds` or `<leader>b`.
+
+File format ~
+>
+	{
+	  "status": "pending",
+	  "user_id": 42,
+	  "name": "O'Brien",
+	  "dt": "~SYSDATE"
+	}
+<
+Values are typed; dblite formats them for SQL automatically:
+
+	JSON number		verbatim	    `42` -> `42`
+	String			auto SQL-quoted,    `"O'Brien"` -> `'O''Brien'`
+				quotes escaped
+	String prefixed `~`	raw SQL (strip ~)   `"~SYSDATE"` -> `SYSDATE`
+
+Nested keys are flattened with dots, so `{ "t2kb": { "date": ... } }` and
+`{ "t2kb.date": ... }` both satisfy a `:t2kb.date` bind.
+
+Workflow ~
+
+- Run a query: if all referenced params are present in dblite.binds.json the
+  query runs immediately. If any are missing, the file opens so you can add
+  them; re-run after saving.
+- Edit binds: `<leader>b` or `:Dblite binds` toggles the dblite.binds.json
+  window. `:w` saves, `q` closes.
+- Values are re-read on every execution, so edits take effect on the next run.
+
+The binds window opens as a vertical split by default; set
+`binds_split.style = 'float'` for a centered float. See `binds_split` in
+|dblite-config|.
+
+Hover (`K` in a SQL buffer, via `keymaps.editor.hover_bind`) shows the value
+of the bind token under the cursor.
+
+Add `"binds_file"` to `style.dbout.sections` to show a `binds` badge in the
+status line whenever dblite.binds.json exists in the cwd.
+
+==============================================================================
+13. AUTOCOMPLETE					*dblite-completion*
+
+dblite ships a blink.cmp source providing context-aware SQL completions. Add
+it to your blink config: >lua
+	sources = {
+	  providers = {
+	    dblite = { module = 'dblite.blink', name = 'dblite' },
+	  },
+	  default = { 'lsp', 'path', 'snippets', 'buffer', 'dblite' },
+	}
+<
+What gets completed ~
+
+	General SQL buffer	    SQL keywords + table names
+	After FROM/JOIN/INTO/UPDATE  table names first
+	After `table.`		    column names for that table
+	After `:`		    dblite.binds.json keys + columns as
+				    dotted bind suggestions
+	Inside dblite.binds.json    dotted column keys (`orders.id`)
+
+Schema is fetched once per connection switch in the background, so subsequent
+completions are instant from cache. The source uses the active connection set
+by |:DbliteUseConn|.
+
+==============================================================================
+14. COMMANDS						*dblite-commands*
+
+Unified entry point ~
+							*:Dblite*
+:Dblite run			Run the entire buffer as a query.
+:Dblite run at			Run the statement under the cursor.
+:Dblite toggle panel		Toggle the connections panel.
+:Dblite toggle dbout		Toggle the result window.
+:Dblite conn add [uri]		Add a connection.
+:Dblite conn list		List connections.
+:Dblite conn use <name>		Set the active connection.
+:Dblite conn edit <name>	Edit a connection.
+:Dblite conn del <name>		Delete a connection.
+:Dblite conn file		Open the raw connections JSON.
+:Dblite build			Download or build the native binary.
+:Dblite inspect [fmt]		Inspect current page (json|table|csv).
+:Dblite binds			Toggle the dblite.binds.json window.
+
+All subcommands and connection names support <Tab> completion.
+
+Individual commands ~
+							*:DbliteRun*
+:DbliteRun			Run the entire buffer as a query.
+							*:DbliteRunAt*
+:DbliteRunAt			Run the statement under the cursor.
+							*:DbliteToggleOut*
+:DbliteToggleOut		Toggle the result (dbout) window.
+							*:DblitePanel*
+:DblitePanel			Toggle the connections panel.
+							*:DbliteAddConn*
+:DbliteAddConn [uri]		Add a connection. Accepts a URI argument or
+				prompts field-by-field.
+							*:DbliteListConns*
+:DbliteListConns		List all connections; active marked `*`.
+							*:DbliteUseConn*
+:DbliteUseConn [name]		Set the active connection. With no argument,
+				report the current one. Tab-completes names.
+							*:DbliteEditConn*
+:DbliteEditConn {name}		Re-prompt each field (blank keeps current).
+							*:DbliteDeleteConn*
+:DbliteDeleteConn {name}	Permanently remove a saved connection.
+							*:DbliteBuild*
+:DbliteBuild			Download a pre-built binary, or build from
+				source if none matches your platform.
+
+The unified :Dblite forms and these individual commands are equivalent;
+:DbliteRun, :DbliteRunAt, and :DbliteToggleOut are kept as aliases.
+
+==============================================================================
+15. KEYMAPS						*dblite-keymaps*
+
+dblite sets keymaps in three scopes. All are configurable (see
+|dblite-config|); set any mapping to "" or false to disable it.
+
+dbout buffer ~  (active only inside the result buffer)
+
+	`L`		next page		`keymaps.dbout.next`
+	`H`		previous page		`keymaps.dbout.prev`
+	`[`		previous history	`keymaps.dbout.history_prev`
+	`]`		next history		`keymaps.dbout.history_next`
+	`K`		hover query		`keymaps.dbout.hover_query`
+	`d`		toggle column types	`keymaps.dbout.toggle_types`
+	`gi`		inspect page		`keymaps.dbout.inspect`
+	`<C-c>`		cancel query		`keymaps.dbout.cancel`
+
+editor (SQL buffers) ~  (set on FileType sql,plsql,mysql,sqlite)
+
+	`<leader>b`	toggle binds window	`keymaps.editor.binds`
+	`<leader>l`	toggle dbout fullscreen	`keymaps.editor.fullscreen`
+	`K`		hover bind value	`keymaps.editor.hover_bind`
+			(also `keymaps.editor.connections` if you set it)
+
+panel ~  (active inside the connections panel)
+
+	`<CR>`		activate connection	`keymaps.panel.select`
+	`cw`		edit connection		`keymaps.panel.edit`
+	`q`		close panel		`keymaps.panel.close`
+
+dblite defines no <leader>-prefixed mappings for running queries; bind those
+yourself against the |dblite-api| (see the example in |dblite-config|).
+
+==============================================================================
+16. CONFIGURATION					*dblite-config*
+							*dblite.setup()*
+Call `require('dblite').setup(opts)`. Options are deep-merged over the
+defaults, so you only need to specify what you change. Defaults: >lua
+	require('dblite').setup({
+	  split_dir      = 'horizontal',  -- 'vertical'|'horizontal'|'tab'
+	  split_size     = { width = 80, height = 20 },
+	  page_size      = 100,           -- rows per page in dbout
+	  max_rows       = 10000,         -- hard cap on rows returned
+	  max_col_width  = 50,            -- truncate cells wider than this; 0=off
+	  max_history    = 20,            -- past results to keep; 0 = unlimited
+	  show_column_types = false,      -- show [TYPE] in headers by default
+	  filetype       = '',            -- dbout filetype ('' = no highlighting)
+	  flash_timeout  = 2000,          -- ms to hold query flash; 0 = until done
+	  json_view      = 'tab',         -- inspect window: tab|vertical|
+	                                  --   horizontal|float
+	  inspect_format = 'json',        -- default inspect format: json|table|csv
+	  inspect_expand_json = true,     -- decode nested JSON-string cells
+	  panel = {
+	    width = 30,                   -- side panel width in columns
+	  },
+	  binds_split = {
+	    style        = 'split',       -- 'split' | 'float'
+	    split_dir    = 'vertical',    -- 'vertical' | 'horizontal' (split)
+	    width        = 40,            -- columns (vertical); 0 = auto
+	    height       = 20,            -- rows (horizontal); 0 = auto
+	    float_width  = 0,             -- float cols; 0 = 70% of editor width
+	    float_height = 0,             -- float rows; 0 = 60% of editor lines
+	  },
+	  style = {
+	    dbout = {
+	      cursorline = false,         -- highlight the cursor line in dbout
+	      column_type_hl = 'DbliteColumnType',  -- hl for [TYPE] annotations
+	      -- Status line sections. Each: { "item", sep = "…", hl = "Group" }
+	      -- Items: "history"|"pagination"|"query_time"|"connection"|
+	      --        "binds_file"
+	      sections = {
+	        { 'history' },
+	        { 'pagination', sep = '  ' },
+	        { 'query_time', sep = '  —  ' },
+	        { 'connection', sep = '  ·  ' },
+	      },
+	    },
+	  },
+	  keymaps = {
+	    dbout = {
+	      next         = 'L',
+	      prev         = 'H',
+	      cancel       = '<C-c>',
+	      inspect      = 'gi',
+	      history_prev = '[',
+	      history_next = ']',
+	      hover_query  = 'K',
+	      toggle_types = 'd',
+	    },
+	    editor = {
+	      binds      = '<leader>b',
+	      fullscreen = '<leader>l',
+	      hover_bind = 'K',
+	      -- connections = '<leader>dc',  -- opt-in: open connections JSON
+	    },
+	    panel = { select = '<CR>', edit = 'cw', close = 'q' },
+	  },
+	})
+<
+==============================================================================
+17. LUA API						*dblite-api*
+
+All functionality is available programmatically: >lua
+	local db = require('dblite')
+
+	db.execute()               -- run the current buffer as a query
+	db.execute_at_cursor()     -- run the statement under the cursor
+	db.toggle_dbout()          -- show/hide the result window
+	db.toggle_fullscreen()     -- toggle dbout fullscreen tab
+	db.inspect(format)         -- 'json' | 'table' | 'csv'
+	db.toggle_binds()          -- toggle the dblite.binds.json window
+	db.open_binds()            -- open/focus the binds window (no close)
+	db.edit_binds()            -- alias for toggle_binds()
+	db.edit_connections_file() -- open connections JSON for editing
+	db.toggle_panel()          -- open/close the connections panel
+	db.open_panel()            -- open the panel
+	db.close_panel()           -- close the panel
+	db.is_panel_open()         -- returns true/false
+	db.hover_bind()            -- hover the bind token under the cursor
+	db.get_active_conn()       -- the active connection table, or nil
+	db.get_flat_binds()        -- flattened dblite.binds.json as a table
+<
+Example user keymaps (dblite does not set these): >lua
+	local db = require('dblite')
+	vim.keymap.set('n', '<leader>dr', db.execute,           { desc = 'dblite: run' })
+	vim.keymap.set('n', '<leader>de', db.execute_at_cursor, { desc = 'dblite: run at cursor' })
+	vim.keymap.set('n', '<leader>dp', db.toggle_panel,      { desc = 'dblite: panel' })
+	vim.keymap.set('n', '<leader>do', db.toggle_dbout,      { desc = 'dblite: dbout' })
+<
+==============================================================================
+18. HIGHLIGHTS						*dblite-highlights*
+
+dblite defines these highlight groups (all `default`, so your colorscheme or
+an explicit `nvim_set_hl` override wins):
+
+						*hl-DbliteStatusPage*
+DbliteStatusPage	dbout status line text. Links to |hl-Title|.
+						*hl-DbliteFlash*
+DbliteFlash		statement flash when running at cursor.
+			Links to |hl-Visual|.
+						*hl-DbliteSearch*
+DbliteSearch		in-result search match. Links to |hl-Search|.
+						*hl-DbliteCancelled*
+DbliteCancelled		"cancelled" status. Links to |hl-DiagnosticError|.
+						*hl-DbliteColumnType*
+DbliteColumnType	column [TYPE] annotations. Links to |hl-Comment|.
+
+==============================================================================
+vim:tw=78:ts=8:noet:ft=help:norl:
