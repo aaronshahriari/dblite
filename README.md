@@ -76,6 +76,7 @@ Supported database types: **Oracle** and **SQL Server**.
 | `:DbliteEditConn <name>` | Edit a saved connection. |
 | `:DbliteDeleteConn <name>` | Delete a connection. |
 | `:Dblite conn file` | Open the raw connections JSON for direct editing. |
+| `:DbliteConnPicker` (or `:Dblite conn pick`) | Pick a connection with a [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) picker. |
 
 All commands that accept a name support tab-completion.
 
@@ -106,6 +107,24 @@ Port defaults to `1521` for Oracle and `1433` for SQL Server when omitted. SQL S
 | `q` | Close the panel |
 
 The active connection is marked with `✓`. Switching connections from the panel takes effect immediately for the next query.
+
+### Telescope picker (opt-in)
+
+If you prefer a fuzzy picker over the side panel, set `connection_picker = "telescope"`. This requires [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) and is **off by default** — existing setups are unaffected.
+
+```lua
+require("dblite").setup({
+  connection_picker = "telescope", -- "panel" (default) | "telescope"
+})
+```
+
+When enabled, `:DblitePanel` (and `:Dblite toggle panel`) open the telescope picker instead of the side panel. The currently active connection is marked with a `●` and named in the picker title, so if you're already connected and open the picker again you can see at a glance that you're still on it — re-selecting it is a no-op that just confirms `already using '<name>'`.
+
+`:DbliteConnPicker` always opens the telescope picker regardless of the `connection_picker` setting, so you can bind it directly:
+
+```lua
+vim.keymap.set("n", "<leader>dc", "<cmd>DbliteConnPicker<cr>", { desc = "dblite: pick connection" })
+```
 
 ## Running Queries
 
@@ -350,6 +369,7 @@ require('dblite').setup({
   panel = {
     width = 30,                   -- side panel width in columns
   },
+  connection_picker = 'panel',    -- 'panel' (default) | 'telescope' (requires telescope.nvim)
   binds_split = {
     style        = 'split',    -- 'split' | 'float'
     split_dir    = 'vertical', -- 'vertical' | 'horizontal' (split only)

@@ -26,6 +26,11 @@ local M = {
   panel = {
     width = 30,  -- columns for the side panel
   },
+  -- How `:DblitePanel` / `M.toggle_panel()` select a connection:
+  --   "panel"     → the built-in side panel (default)
+  --   "telescope" → a telescope.nvim picker (requires nvim-telescope/telescope.nvim)
+  -- `:DbliteConnPicker` always opens the telescope picker regardless of this setting.
+  connection_picker = "panel",
   binds_split = {
     style        = "split",    -- "split" | "float"
     split_dir    = "vertical", -- "vertical" | "horizontal" (split only)

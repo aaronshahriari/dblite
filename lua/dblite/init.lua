@@ -1,6 +1,7 @@
 local config       = require("dblite.config")
 local connections  = require("dblite.connections")
 local panel        = require("dblite.panel")
+local telescope    = require("dblite.telescope")
 local query_module = require("dblite.query")
 
 local M = {}
@@ -850,10 +851,32 @@ local function edit_conn_by_name(name)
   panel.refresh()
 end
 
+-- Sets the active connection, warms the schema cache, and refreshes the panel.
+local function activate_conn(conn)
+  state.active_conn = conn
+  require("dblite.schema").prefetch(conn)
+  vim.notify("dblite: using '" .. conn.name .. "'", vim.log.levels.INFO)
+  panel.refresh()
+end
+
 panel.setup({
   get_state = function() return state end,
   on_edit   = function(name) edit_conn_by_name(name) end,
 })
+
+telescope.setup({
+  get_state = function() return state end,
+  on_select = function(conn) activate_conn(conn) end,
+})
+
+-- Opens the configured connection picker (telescope when enabled).
+function M.pick_connection()
+  telescope.pick()
+end
+
+vim.api.nvim_create_user_command("DbliteConnPicker", function()
+  telescope.pick()
+end, {})
 
 -- :DbliteAddConn — interactive; optionally accepts a URI as first argument
 -- URI format: oracle://user[:pass]@host[:port]/service  OR  sqlserver://user[:pass]@host[:port]/database
@@ -963,10 +986,7 @@ vim.api.nvim_create_user_command("DbliteUseConn", function(opts)
     vim.notify("dblite: connection '" .. opts.args .. "' not found", vim.log.levels.ERROR)
     return
   end
-  state.active_conn = conn
-  require("dblite.schema").prefetch(conn)
-  vim.notify("dblite: using '" .. conn.name .. "'", vim.log.levels.INFO)
-  panel.refresh()
+  activate_conn(conn)
 end, { nargs = "?", complete = complete_name })
 
 -- :DbliteEditConn <name> — re-prompt each field (leave blank to keep current value)
@@ -1033,13 +1053,19 @@ end
 vim.api.nvim_create_user_command("DbliteToggleOut", M.toggle_dbout, {})
 
 -- Panel public API
-M.toggle_panel    = panel.toggle
+function M.toggle_panel()
+  if config.connection_picker == "telescope" then
+    telescope.pick()
+  else
+    panel.toggle()
+  end
+end
 M.open_panel      = panel.open
 M.close_panel     = panel.close
 M.is_panel_open   = panel.is_open
 
 vim.api.nvim_create_user_command("DblitePanel", function()
-  panel.toggle()
+  M.toggle_panel()
 end, {})
 
 -- Recursively decode string values that are themselves serialized JSON
@@ -1316,7 +1342,7 @@ do
   local dispatch = {
     run           = function(a) if a[2] == "at" then M.execute_at_cursor() else M.execute() end end,
     toggle        = function(a)
-      if     a[2] == "panel" then panel.toggle()
+      if     a[2] == "panel" then M.toggle_panel()
       elseif a[2] == "dbout" then M.toggle_dbout()
       else vim.notify("dblite: toggle what? (panel | dbout)", vim.log.levels.ERROR) end
     end,
@@ -1328,7 +1354,8 @@ do
       elseif sub == "edit" then vim.cmd("DbliteEditConn " .. (a[3] or ""))
       elseif sub == "del"  then vim.cmd("DbliteDeleteConn " .. (a[3] or ""))
       elseif sub == "file" then M.edit_connections_file()
-      else vim.notify("dblite: conn what? (add | list | use | edit | del | file)", vim.log.levels.ERROR) end
+      elseif sub == "pick" then telescope.pick()
+      else vim.notify("dblite: conn what? (add | list | use | edit | del | file | pick)", vim.log.levels.ERROR) end
     end,
     build         = function() vim.cmd("DbliteBuild") end,
     inspect       = function(a) M.inspect(a[2]) end,
@@ -1346,7 +1373,7 @@ do
       local opts = {
         run     = { "at" },
         toggle  = { "panel", "dbout" },
-        conn    = { "add", "list", "use", "edit", "del", "file" },
+        conn    = { "add", "list", "use", "edit", "del", "file", "pick" },
         inspect = { "json", "table", "csv" },
       }
       local choices = opts[sub] or {}
