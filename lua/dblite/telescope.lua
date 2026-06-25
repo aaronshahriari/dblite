@@ -32,6 +32,26 @@ local function target_str(c)
     c.user or "", c.host or "", c.port or default_port, db_val or "?")
 end
 
+-- Builds the detail lines shown in the preview pane. The password is masked
+-- so the picker never reveals a stored secret on screen.
+local function detail_lines(c)
+  local default_port = (c.type == "sqlserver") and 1433 or 1521
+  local db_label     = (c.type == "sqlserver") and "Database" or "Service"
+  local db_val       = (c.type == "sqlserver") and c.database or c.service
+  local pw           = (c.password ~= nil and c.password ~= "") and "********" or "(none)"
+  local lines = {
+    "Name      " .. (c.name or ""),
+    "Type      " .. (type_labels[c.type] or c.type or "?"),
+    "Host      " .. (c.host or ""),
+    "Port      " .. tostring(c.port or default_port),
+    "User      " .. (c.user or ""),
+    "Password  " .. pw,
+    db_label .. string.rep(" ", math.max(1, 10 - #db_label)) .. (db_val or ""),
+  }
+  if c.auth then table.insert(lines, "Auth      " .. c.auth) end
+  return lines
+end
+
 -- Opens the telescope picker for saved connections. Marks the active
 -- connection so a connected user re-opening the picker sees they're still on it.
 function M.pick()
@@ -48,6 +68,7 @@ function M.pick()
   local actions       = require("telescope.actions")
   local action_state  = require("telescope.actions.state")
   local entry_display = require("telescope.pickers.entry_display")
+  local previewers    = require("telescope.previewers")
 
   local conns = connections.list()
   if #conns == 0 then
@@ -86,14 +107,32 @@ function M.pick()
     }
   end
 
-  local title = active
-    and ("Connections  (active: " .. active.name .. ")")
-    or  "Connections"
+  local pcfg       = config.telescope_picker or {}
+  local preview_on = pcfg.preview ~= false
+
+  local layout_config = {
+    width  = pcfg.width  or 0.4,
+    height = pcfg.height or 0.4,
+  }
+  if preview_on then
+    layout_config.preview_width = pcfg.preview_width or 0.5
+  end
+
+  local previewer = preview_on and previewers.new_buffer_previewer({
+    title = "Connection",
+    define_preview = function(self, entry)
+      if not entry or not entry.value then return end
+      vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, detail_lines(entry.value))
+    end,
+  }) or false
 
   pickers.new({}, {
-    prompt_title = title,
-    finder = finders.new_table({ results = conns, entry_maker = entry_maker }),
-    sorter = conf.generic_sorter({}),
+    prompt_title    = "Connections",
+    finder          = finders.new_table({ results = conns, entry_maker = entry_maker }),
+    sorter          = conf.generic_sorter({}),
+    previewer       = previewer,
+    layout_strategy = "horizontal",
+    layout_config   = layout_config,
     attach_mappings = function(prompt_bufnr)
       actions.select_default:replace(function()
         local entry = action_state.get_selected_entry()
