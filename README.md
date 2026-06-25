@@ -118,7 +118,21 @@ require("dblite").setup({
 })
 ```
 
-When enabled, `:DblitePanel` (and `:Dblite toggle panel`) open the telescope picker instead of the side panel. The currently active connection is marked with a `●` and named in the picker title, so if you're already connected and open the picker again you can see at a glance that you're still on it — re-selecting it is a no-op that just confirms `already using '<name>'`.
+When enabled, `:DblitePanel` (and `:Dblite toggle panel`) open the telescope picker instead of the side panel. The list on the left highlights the currently active connection with a `●`, so if you're already connected and open the picker again you can see at a glance that you're still on it — re-selecting it is a no-op that just confirms `already using '<name>'`. The right pane previews the selected connection's details with the **password masked**.
+
+The picker is compact by default and fully sizeable:
+
+```lua
+require("dblite").setup({
+  connection_picker = "telescope",
+  telescope_picker = {
+    preview       = true, -- show the details preview pane (default true)
+    width         = 0.4,  -- picker width:  fraction of editor (<= 1) or absolute columns (> 1)
+    height        = 0.4,  -- picker height: fraction of editor (<= 1) or absolute rows (> 1)
+    preview_width = 0.5,  -- preview pane width as a fraction of the picker
+  },
+})
+```
 
 `:DbliteConnPicker` always opens the telescope picker regardless of the `connection_picker` setting, so you can bind it directly:
 
@@ -370,6 +384,12 @@ require('dblite').setup({
     width = 30,                   -- side panel width in columns
   },
   connection_picker = 'panel',    -- 'panel' (default) | 'telescope' (requires telescope.nvim)
+  telescope_picker = {            -- sizing/behaviour when connection_picker = 'telescope'
+    preview       = true,         -- show the connection-details preview (password masked)
+    width         = 0.4,          -- fraction of editor (<= 1) or absolute columns (> 1)
+    height        = 0.4,          -- fraction of editor (<= 1) or absolute rows (> 1)
+    preview_width = 0.5,          -- preview pane width as a fraction of the picker
+  },
   binds_split = {
     style        = 'split',    -- 'split' | 'float'
     split_dir    = 'vertical', -- 'vertical' | 'horizontal' (split only)

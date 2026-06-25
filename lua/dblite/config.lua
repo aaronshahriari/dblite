@@ -31,6 +31,12 @@ local M = {
   --   "telescope" → a telescope.nvim picker (requires nvim-telescope/telescope.nvim)
   -- `:DbliteConnPicker` always opens the telescope picker regardless of this setting.
   connection_picker = "panel",
+  telescope_picker = {  -- sizing/behaviour for the telescope connection picker
+    preview       = true, -- show a side preview with connection details (password masked)
+    width         = 0.4,  -- picker width:  fraction of editor (<= 1) or absolute columns (> 1)
+    height        = 0.4,  -- picker height: fraction of editor (<= 1) or absolute rows (> 1)
+    preview_width = 0.5,  -- preview pane width as a fraction of the picker (when preview = true)
+  },
   binds_split = {
     style        = "split",    -- "split" | "float"
     split_dir    = "vertical", -- "vertical" | "horizontal" (split only)
