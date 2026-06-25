@@ -1052,6 +1052,22 @@ end
 
 vim.api.nvim_create_user_command("DbliteToggleOut", M.toggle_dbout, {})
 
+-- :DbliteExport <csv|json> [path] — write the full result set to a file
+vim.api.nvim_create_user_command("DbliteExport", function(opts)
+  local fmt  = opts.fargs[1]
+  local path = opts.fargs[2] and table.concat(vim.list_slice(opts.fargs, 2), " ") or nil
+  M.export(fmt, path)
+end, {
+  nargs = "+",
+  complete = function(arg_lead, cmd_line)
+    local n = #vim.split(cmd_line, "%s+")
+    if n <= 2 then
+      return vim.tbl_filter(function(k) return k:sub(1, #arg_lead) == arg_lead end, { "csv", "json" })
+    end
+    return vim.fn.getcompletion(arg_lead, "file")
+  end,
+})
+
 -- Panel public API
 function M.toggle_panel()
   if config.connection_picker == "telescope" then
@@ -1230,6 +1246,83 @@ function M.inspect(format)
   vim.bo[bufnr].modifiable = false
 end
 
+-- Serializes the full result set (all rows, not just the current page) to a
+-- list of lines for the given format ("csv" | "json"). Returns lines or nil + err.
+local function serialize_result(format)
+  if #state.columns == 0 then
+    return nil, "no query result to export"
+  end
+
+  if format == "csv" then
+    local function csv_escape(val)
+      local s = (val == nil or val == vim.NIL) and "" or tostring(val)
+      s = s:gsub("\r\n", "\\n"):gsub("\n", "\\n"):gsub("\r", "\\n")
+      if s:find('[,"]') then s = '"' .. s:gsub('"', '""') .. '"' end
+      return s
+    end
+    local lines = { table.concat(vim.tbl_map(csv_escape, state.columns), ",") }
+    for _, row in ipairs(state.rows) do
+      local parts = {}
+      for _, col in ipairs(state.columns) do table.insert(parts, csv_escape(row[col])) end
+      table.insert(lines, table.concat(parts, ","))
+    end
+    return lines
+
+  elseif format == "json" then
+    -- Prefer the original server JSON (most faithful); fall back to re-encoding.
+    local encoded = state.raw_json
+    if not encoded or encoded == "" then
+      encoded = vim.json.encode({ columns = state.columns, rows = state.rows }) or ""
+    end
+    local pretty
+    pcall(function()
+      local r = vim.system({ "jq", "." }, { stdin = encoded }):wait()
+      if r.code == 0 and r.stdout and #r.stdout > 0 then
+        pretty = vim.split(r.stdout:gsub("\n$", ""), "\n", { plain = true })
+      end
+    end)
+    return pretty or vim.split(encoded, "\n", { plain = true })
+  end
+
+  return nil, "unknown export format '" .. tostring(format) .. "' (csv|json)"
+end
+
+-- :Dblite export <csv|json> [path]
+-- Writes the entire result set to a file. Prompts for a path when omitted.
+function M.export(format, path)
+  format = (format or ""):lower()
+  if format ~= "csv" and format ~= "json" then
+    vim.notify("dblite: export format must be 'csv' or 'json'", vim.log.levels.ERROR)
+    return
+  end
+
+  local lines, err = serialize_result(format)
+  if not lines then
+    vim.notify("dblite: " .. err, vim.log.levels.WARN)
+    return
+  end
+
+  if not path or path == "" then
+    local default = "dblite_export." .. format
+    path = vim.fn.input({ prompt = "Export to: ", default = default, completion = "file" })
+    if path == "" then
+      vim.notify("dblite: export cancelled", vim.log.levels.INFO)
+      return
+    end
+  end
+
+  path = vim.fn.fnamemodify(vim.fn.expand(path), ":p")
+  vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
+
+  local ok, werr = pcall(vim.fn.writefile, lines, path)
+  if not ok then
+    vim.notify("dblite: could not write " .. path .. ": " .. tostring(werr), vim.log.levels.ERROR)
+    return
+  end
+  vim.notify(string.format("dblite: exported %d row%s to %s",
+    #state.rows, #state.rows == 1 and "" or "s", path), vim.log.levels.INFO)
+end
+
 local _binds_win = nil
 
 local function ensure_binds_file()
@@ -1359,6 +1452,10 @@ do
     end,
     build         = function() vim.cmd("DbliteBuild") end,
     inspect       = function(a) M.inspect(a[2]) end,
+    export        = function(a)
+      local path = #a >= 3 and table.concat(vim.list_slice(a, 3), " ") or nil
+      M.export(a[2], path)
+    end,
     binds         = function() M.edit_binds() end,
   }
 
@@ -1367,7 +1464,7 @@ do
     local n = #tokens
     if n == 2 then
       return vim.tbl_filter(function(k) return k:sub(1, #arg_lead) == arg_lead end,
-        { "run", "toggle", "conn", "build", "inspect", "binds" })
+        { "run", "toggle", "conn", "build", "inspect", "export", "binds" })
     elseif n == 3 then
       local sub = tokens[2]
       local opts = {
@@ -1375,11 +1472,14 @@ do
         toggle  = { "panel", "dbout" },
         conn    = { "add", "list", "use", "edit", "del", "file", "pick" },
         inspect = { "json", "table", "csv" },
+        export  = { "csv", "json" },
       }
       local choices = opts[sub] or {}
       return vim.tbl_filter(function(k) return k:sub(1, #arg_lead) == arg_lead end, choices)
     elseif n >= 4 and tokens[2] == "conn" and (tokens[3] == "use" or tokens[3] == "edit" or tokens[3] == "del") then
       return complete_name(arg_lead)
+    elseif n >= 4 and tokens[2] == "export" then
+      return vim.fn.getcompletion(arg_lead, "file")
     end
     return {}
   end
