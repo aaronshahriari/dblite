@@ -180,6 +180,8 @@ require('dblite').setup({
 
 The scratch window opens according to `json_view` (default `"tab"`). Press `q` to close it.
 
+In `json` format, cell values that are themselves serialized JSON (e.g. a `JOB_RESULT` column holding `"{\"Count\": 1095521}"`) are decoded and nested inline instead of shown as one escaped blob, so the output reads cleanly. Set `inspect_expand_json = false` to keep the raw string values.
+
 ### Bind Parameters
 
 Bind params use a `dblite.binds.json` file in the current working directory. Create one with `:Dblite binds` or `<leader>b`.
@@ -344,6 +346,7 @@ require('dblite').setup({
   flash_timeout  = 2000,          -- ms to hold the query highlight; 0 = hold until results
   json_view      = 'tab',         -- where inspect opens: 'tab' | 'vertical' | 'horizontal' | 'float'
   inspect_format = 'json',        -- default inspect format: 'json' | 'table' | 'csv'
+  inspect_expand_json = true,     -- json inspect: decode cell values that are themselves JSON strings so they nest cleanly
   panel = {
     width = 30,                   -- side panel width in columns
   },

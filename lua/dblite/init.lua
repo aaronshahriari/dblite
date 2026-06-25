@@ -1042,6 +1042,34 @@ vim.api.nvim_create_user_command("DblitePanel", function()
   panel.toggle()
 end, {})
 
+-- Recursively decode string values that are themselves serialized JSON
+-- objects/arrays, so the inspector nests them cleanly instead of showing a
+-- single escaped blob. Leaves scalars and non-JSON strings untouched.
+local function expand_json_strings(value, depth)
+  depth = depth or 0
+  if depth > 8 then return value end
+
+  if type(value) == "string" then
+    local trimmed = value:match("^%s*(.-)%s*$")
+    local first = trimmed:sub(1, 1)
+    if first == "{" or first == "[" then
+      local ok, decoded = pcall(vim.json.decode, trimmed)
+      if ok and type(decoded) == "table" then
+        return expand_json_strings(decoded, depth + 1)
+      end
+    end
+    return value
+  elseif type(value) == "table" then
+    local out = {}
+    for k, v in pairs(value) do
+      out[k] = expand_json_strings(v, depth + 1)
+    end
+    return out
+  end
+
+  return value
+end
+
 function M.inspect(format)
   format = format or config.inspect_format or "json"
 
@@ -1065,7 +1093,11 @@ function M.inspect(format)
       vim.notify("dblite: could not parse stored JSON", vim.log.levels.ERROR)
       return
     end
-    local page_data = { columns = decoded.columns, rows = page_rows }
+    local inspect_rows = page_rows
+    if config.inspect_expand_json ~= false then
+      inspect_rows = expand_json_strings(page_rows)
+    end
+    local page_data = { columns = decoded.columns, rows = inspect_rows }
     local encoded   = vim.json.encode(page_data) or ""
     local pretty_ok = false
     pcall(function()

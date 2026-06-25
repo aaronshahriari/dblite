@@ -37,6 +37,7 @@ local M = {
   flash_timeout  = 2000,  -- ms to hold the query highlight before auto-clearing (0 = wait for results)
   json_view      = "tab",  -- where to open the inspector: "tab" | "vertical" | "horizontal" | "float"
   inspect_format = "json", -- default inspect format: "json" | "table" | "csv"
+  inspect_expand_json = true, -- in json inspect, decode cell values that are themselves JSON strings so they nest cleanly
   style = {
     dbout = {
       cursorline = false, -- highlight the line under the cursor in dbout
