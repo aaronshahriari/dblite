@@ -80,28 +80,25 @@ function M.pick()
   local active = st.active_conn
 
   local displayer = entry_display.create({
-    separator = "  ",
+    separator = " ",
     items = {
       { width = 1 },         -- active marker
-      { width = 24 },        -- name
-      { width = 11 },        -- type label
-      { remaining = true },  -- user@host:port/db
+      { remaining = true },  -- name
     },
   })
 
+  -- Connection type and target are shown in the preview pane, so the list
+  -- itself stays clean: just the active marker and the connection name.
   local function entry_maker(c)
     local is_active = active ~= nil and active.id == c.id
-    local target    = target_str(c)
     local name_hl   = is_active and "DbliteTelescopeActive" or "TelescopeResultsNormal"
     return {
       value   = c,
-      ordinal = (c.name or "") .. " " .. (c.type or "") .. " " .. target,
+      ordinal = (c.name or "") .. " " .. (c.type or "") .. " " .. target_str(c),
       display = function()
         return displayer({
           { is_active and "\xe2\x97\x8f" or " ", "DbliteTelescopeActive" },  -- ● in UTF-8
           { c.name or "",                         name_hl },
-          { type_labels[c.type] or c.type or "?", "Comment" },
-          { target,                               "Comment" },
         })
       end,
     }
