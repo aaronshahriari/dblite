@@ -150,8 +150,21 @@ Open any buffer, set an active connection with `:DbliteUseConn` (or via the pane
 | `:Dblite run at` | Run the statement under the cursor (treesitter-aware) |
 | `:Dblite toggle dbout` | Show/hide the result window (query keeps running if in-flight) |
 | `:Dblite inspect [json\|table\|csv]` | Open the current page in a scratch window, untruncated |
+| `:Dblite export <csv\|json> [path]` | Write the **entire** result set to a file (prompts for a path if omitted) |
 
 The legacy `:DbliteRun`, `:DbliteRunAt`, and `:DbliteToggleOut` commands are kept as aliases.
+
+### Exporting Results
+
+`:Dblite export csv` and `:Dblite export json` (or the standalone `:DbliteExport`) write the full result set — every row, not just the current page — to a file:
+
+```
+:Dblite export csv ~/exports/jobs.csv
+:Dblite export json ./out/jobs.json
+:DbliteExport csv                       " omit the path to be prompted (with file completion)
+```
+
+`~`, environment variables, and relative paths are expanded, and any missing parent directories are created. CSV is RFC-4180 escaped; JSON is pretty-printed via `jq` when available (falling back to compact JSON otherwise) and preserves the original server values faithfully.
 
 Trailing semicolons are stripped automatically — write SQL however feels natural.
 
