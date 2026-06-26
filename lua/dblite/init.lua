@@ -1314,7 +1314,19 @@ function M.export(format, path)
   path = vim.fn.fnamemodify(vim.fn.expand(path), ":p")
   vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
 
-  local ok, werr = pcall(vim.fn.writefile, lines, path)
+  -- Write with Lua I/O rather than vim.fn.writefile: cell values may contain
+  -- NUL bytes (e.g. CLOB/RAW columns), which Neovim coerces to a Blob when
+  -- crossing into Vimscript, making writefile fail with E974.
+  local f, oerr = io.open(path, "wb")
+  if not f then
+    vim.notify("dblite: could not write " .. path .. ": " .. tostring(oerr), vim.log.levels.ERROR)
+    return
+  end
+  local ok, werr = pcall(function()
+    f:write(table.concat(lines, "\n"))
+    f:write("\n")
+  end)
+  f:close()
   if not ok then
     vim.notify("dblite: could not write " .. path .. ": " .. tostring(werr), vim.log.levels.ERROR)
     return
