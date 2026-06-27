@@ -608,7 +608,45 @@ local function expand_env(s)
   return (s:gsub("%$([%w_]+)", function(var) return os.getenv(var) or ("$" .. var) end))
 end
 
-local function execute_core(query)
+-- Render a script-mode run (per-statement OK/ERROR log) into the result buffer.
+local function render_script_log(parsed, elapsed)
+  if not state.result_bufnr or not vim.api.nvim_buf_is_valid(state.result_bufnr) then return end
+  local results = parsed.results or {}
+  local total   = parsed.total or #results
+  local lines   = {}
+  if (parsed.failed or 0) > 0 then
+    table.insert(lines, string.format(
+      "-- dblite script: FAILED at statement %d/%d  (%.2fs)",
+      parsed.executed + 1, total, elapsed))
+  else
+    table.insert(lines, string.format(
+      "-- dblite script: %d/%d statement(s) OK  (%.2fs)",
+      parsed.executed or 0, total, elapsed))
+  end
+  table.insert(lines, "")
+  for _, r in ipairs(results) do
+    if r.ok then
+      local detail = (r.update_count ~= nil and r.update_count >= 0)
+        and string.format(" (%d row(s))", r.update_count) or ""
+      table.insert(lines, string.format("[%d] OK    %s%s", r.index, r.preview or "", detail))
+    else
+      table.insert(lines, string.format("[%d] ERROR %s", r.index, r.preview or ""))
+      for _, el in ipairs(vim.split(tostring(r.error or ""), "\n", { plain = true })) do
+        table.insert(lines, "        " .. el)
+      end
+    end
+  end
+  local ran = #results
+  if ran < total then
+    table.insert(lines, "")
+    table.insert(lines, string.format("-- stopped: %d statement(s) not run", total - ran))
+  end
+  vim.bo[state.result_bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(state.result_bufnr, 0, -1, false, lines)
+  vim.bo[state.result_bufnr].modifiable = false
+end
+
+local function execute_core(query, script)
   if vim.fn.executable(config.binary) ~= 1 then
     local hint = _plugin_root
       and "run :DbliteBuild to compile the native binary"
@@ -636,7 +674,9 @@ local function execute_core(query)
     start_spinner()
 
   local cmd = { config.binary }
-  if config.max_rows and config.max_rows > 0 then
+  if script then
+    table.insert(cmd, "--script")
+  elseif config.max_rows and config.max_rows > 0 then
     table.insert(cmd, "--max-rows")
     table.insert(cmd, tostring(config.max_rows))
   end
@@ -678,6 +718,11 @@ local function execute_core(query)
       local ok, parsed = pcall(vim.json.decode, result.stdout)
       if not ok or type(parsed) ~= "table" then
         set_status("-- dblite: failed to parse JSON: " .. tostring(parsed))
+        return
+      end
+
+      if parsed.script then
+        render_script_log(parsed, elapsed)
         return
       end
 
@@ -776,8 +821,26 @@ function M.execute_at_cursor()
   execute_core(query)
 end
 
+-- Run a whole SQL*Plus-style script: many statements (PL/SQL blocks terminated
+-- by a lone "/", plain statements by ";") executed in order on one connection.
+function M.execute_script(opts)
+  local first, last
+  if opts and opts.range and opts.range > 0 then
+    first, last = opts.line1, opts.line2
+  else
+    first, last = 1, vim.api.nvim_buf_line_count(0)
+  end
+  local query = table.concat(vim.api.nvim_buf_get_lines(0, first - 1, last, false), "\n")
+  if query:match("^%s*$") then
+    vim.notify("dblite: nothing to run", vim.log.levels.WARN)
+    return
+  end
+  execute_core(query, true)
+end
+
 vim.api.nvim_create_user_command("DbliteRun",   M.execute,           {})
 vim.api.nvim_create_user_command("DbliteRunAt", M.execute_at_cursor, {})
+vim.api.nvim_create_user_command("DbliteRunScript", M.execute_script, { range = true })
 
 -- :DbliteBuild — download pre-built binary from GitHub Releases, or build from source
 vim.api.nvim_create_user_command("DbliteBuild", function()
@@ -1445,7 +1508,11 @@ end
 -- Unified :Dblite <subcommand> entry point
 do
   local dispatch = {
-    run           = function(a) if a[2] == "at" then M.execute_at_cursor() else M.execute() end end,
+    run           = function(a)
+      if     a[2] == "at"     then M.execute_at_cursor()
+      elseif a[2] == "script" then M.execute_script()
+      else M.execute() end
+    end,
     toggle        = function(a)
       if     a[2] == "panel" then M.toggle_panel()
       elseif a[2] == "dbout" then M.toggle_dbout()
@@ -1480,7 +1547,7 @@ do
     elseif n == 3 then
       local sub = tokens[2]
       local opts = {
-        run     = { "at" },
+        run     = { "at", "script" },
         toggle  = { "panel", "dbout" },
         conn    = { "add", "list", "use", "edit", "del", "file", "pick" },
         inspect = { "json", "table", "csv" },
