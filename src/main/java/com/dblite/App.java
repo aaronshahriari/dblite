@@ -25,6 +25,7 @@ public class App {
         }
 
         int maxRows = 0;
+        boolean scriptMode = false;
         for (int i = 0; i < args.length; i++) {
             if ("--max-rows".equals(args[i]) && i + 1 < args.length) {
                 try {
@@ -33,13 +34,17 @@ public class App {
                     System.err.println("Invalid --max-rows value: " + args[i]);
                     System.exit(1);
                 }
+            } else if ("--script".equals(args[i])) {
+                scriptMode = true;
             }
         }
 
         String query;
         try {
             query = new String(System.in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
-            query = query.replaceAll("[;/]\\s*$", "").trim();
+            // In script mode the splitter handles terminators per-statement; only
+            // the single-statement path strips a lone trailing ;/ for convenience.
+            if (!scriptMode) query = query.replaceAll("[;/]\\s*$", "").trim();
         } catch (java.io.IOException e) {
             System.err.println("Failed to read query from stdin: " + e.getMessage());
             System.exit(1);
@@ -48,6 +53,11 @@ public class App {
         if (query.isEmpty()) {
             System.err.println("No query provided on stdin");
             System.exit(1);
+        }
+
+        if (scriptMode) {
+            runScript(query, url, user, password, integratedAuth);
+            return;
         }
 
         try (Connection conn = integratedAuth
@@ -101,6 +111,190 @@ public class App {
             System.err.println("Connection failed: " + e.getMessage());
             System.exit(2);
         }
+    }
+
+    // --- Script mode -------------------------------------------------------
+    // Runs a SQL*Plus-style script: many statements sharing one connection.
+    // Statements are executed in order, stopping at the first failure, and a
+    // per-statement log is emitted as JSON. Connection-level failures exit(2)
+    // (like the single-statement path); per-statement SQL errors are reported
+    // in the JSON with exit(0) so the log still renders.
+    private static void runScript(String script, String url, String user,
+                                  String password, boolean integratedAuth) {
+        java.util.List<String> stmts = splitStatements(script);
+        if (stmts.isEmpty()) {
+            System.err.println("No statements found in script");
+            System.exit(1);
+        }
+
+        StringBuilder out = new StringBuilder();
+        out.append("{\"script\": true, \"results\": [");
+        int executed = 0, failed = 0;
+
+        try (Connection conn = integratedAuth
+                 ? DriverManager.getConnection(url)
+                 : DriverManager.getConnection(url, user, password)) {
+
+            for (int idx = 0; idx < stmts.size(); idx++) {
+                String s = stmts.get(idx);
+                if (idx > 0) out.append(", ");
+                out.append("{\"index\": ").append(idx + 1);
+                out.append(", \"preview\": \"").append(escape(preview(s))).append("\"");
+                try (Statement stmt = conn.createStatement()) {
+                    boolean rs = stmt.execute(s);
+                    int uc = rs ? -1 : stmt.getUpdateCount();
+                    out.append(", \"ok\": true, \"update_count\": ").append(uc).append("}");
+                    executed++;
+                } catch (java.sql.SQLException e) {
+                    out.append(", \"ok\": false, \"error\": \"")
+                       .append(escape(e.getMessage())).append("\"}");
+                    failed++;
+                    break; // stop at first error
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Connection failed: " + e.getMessage());
+            System.exit(2);
+            return;
+        }
+
+        out.append("], \"executed\": ").append(executed);
+        out.append(", \"failed\": ").append(failed);
+        out.append(", \"total\": ").append(stmts.size()).append("}");
+        System.out.println(out);
+    }
+
+    // First ~80 chars of a statement, collapsed to a single line, for the log.
+    private static String preview(String s) {
+        String one = s.replaceAll("\\s+", " ").trim();
+        return one.length() > 80 ? one.substring(0, 80) + "…" : one;
+    }
+
+    // Splits a SQL*Plus-style script into individual statements.
+    //   - a line containing only "/" terminates the current statement
+    //     (the canonical PL/SQL block terminator)
+    //   - ";" terminates a statement UNLESS it is inside a PL/SQL block
+    //     (DECLARE / BEGIN / CREATE PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE),
+    //     where ";" separates inner statements
+    //   - string literals ('...' with '' escape), quoted identifiers ("..."),
+    //     line comments (--) and block comments (/* */) are skipped so their
+    //     contents never trigger a split
+    static java.util.List<String> splitStatements(String sql) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        int n = sql.length();
+        boolean inSingle = false, inDouble = false, inLine = false, inBlock = false;
+        boolean lineBlank = true; // only whitespace seen on the current line so far
+        int i = 0;
+        while (i < n) {
+            char c = sql.charAt(i);
+            char nx = i + 1 < n ? sql.charAt(i + 1) : '\0';
+
+            if (inLine) {
+                cur.append(c);
+                if (c == '\n') { inLine = false; lineBlank = true; }
+                i++; continue;
+            }
+            if (inBlock) {
+                cur.append(c);
+                if (c == '*' && nx == '/') { cur.append(nx); i += 2; inBlock = false; continue; }
+                i++; continue;
+            }
+            if (inSingle) {
+                cur.append(c);
+                if (c == '\'') {
+                    if (nx == '\'') { cur.append(nx); i += 2; continue; } // '' escape
+                    inSingle = false;
+                }
+                i++; continue;
+            }
+            if (inDouble) {
+                cur.append(c);
+                if (c == '"') inDouble = false;
+                i++; continue;
+            }
+
+            if (c == '-' && nx == '-') { inLine = true; cur.append(c); i++; lineBlank = false; continue; }
+            if (c == '/' && nx == '*') { inBlock = true; cur.append(c); i++; lineBlank = false; continue; }
+            if (c == '\'') { inSingle = true; cur.append(c); i++; lineBlank = false; continue; }
+            if (c == '"') { inDouble = true; cur.append(c); i++; lineBlank = false; continue; }
+
+            if (c == '\n') { cur.append(c); lineBlank = true; i++; continue; }
+            if (c == '\r') { cur.append(c); i++; continue; }
+
+            // lone "/" on its own line -> terminate current statement
+            if (c == '/' && lineBlank) {
+                int j = i + 1;
+                boolean rest = true;
+                while (j < n) {
+                    char d = sql.charAt(j);
+                    if (d == '\n') break;
+                    if (!Character.isWhitespace(d)) { rest = false; break; }
+                    j++;
+                }
+                if (rest) {
+                    flush(out, cur);
+                    i = (j < n && sql.charAt(j) == '\n') ? j + 1 : j;
+                    lineBlank = true;
+                    continue;
+                }
+            }
+
+            if (c == ';' && !isPlsqlBlock(cur)) {
+                flush(out, cur);
+                i++; lineBlank = false; continue;
+            }
+
+            cur.append(c);
+            if (!Character.isWhitespace(c)) lineBlank = false;
+            i++;
+        }
+        flush(out, cur);
+        return out;
+    }
+
+    private static void flush(java.util.List<String> out, StringBuilder cur) {
+        String s = cur.toString().trim();
+        if (!s.isEmpty()) out.add(s);
+        cur.setLength(0);
+    }
+
+    // Is the statement accumulated so far a PL/SQL block (where ";" is internal)?
+    private static boolean isPlsqlBlock(CharSequence csq) {
+        String s = csq.toString();
+        int i = 0, n = s.length();
+        while (i < n) { // skip leading whitespace and comments
+            char c = s.charAt(i);
+            if (Character.isWhitespace(c)) { i++; continue; }
+            if (c == '-' && i + 1 < n && s.charAt(i + 1) == '-') {
+                while (i < n && s.charAt(i) != '\n') i++;
+                continue;
+            }
+            if (c == '/' && i + 1 < n && s.charAt(i + 1) == '*') {
+                i += 2;
+                while (i + 1 < n && !(s.charAt(i) == '*' && s.charAt(i + 1) == '/')) i++;
+                i += 2;
+                continue;
+            }
+            break;
+        }
+        String head = s.substring(Math.min(i, n)).toUpperCase();
+        if (startsWithWord(head, "DECLARE") || startsWithWord(head, "BEGIN")) return true;
+        if (startsWithWord(head, "CREATE")) {
+            String r = head.replaceFirst(
+                "^CREATE\\s+(OR\\s+REPLACE\\s+)?(EDITIONABLE\\s+|NONEDITIONABLE\\s+)?", "");
+            for (String kw : new String[]{"PROCEDURE", "FUNCTION", "PACKAGE", "TRIGGER", "TYPE"}) {
+                if (startsWithWord(r, kw)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean startsWithWord(String s, String w) {
+        if (!s.startsWith(w)) return false;
+        if (s.length() == w.length()) return true;
+        char c = s.charAt(w.length());
+        return !(Character.isLetterOrDigit(c) || c == '_');
     }
 
     private static String formatValue(ResultSet rs, int col, int sqlType) throws java.sql.SQLException {
