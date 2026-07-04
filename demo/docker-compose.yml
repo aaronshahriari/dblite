@@ -5,7 +5,7 @@
 #   docker compose down       # stop and remove (data is ephemeral, re-seeds next up)
 #
 # Connects as SYSTEM to the XEPDB1 pluggable database — the README quickstart URI:
-#   oracle://system:oracle@localhost:1521/XEPDB1
+#   oracle://demo:demo@localhost:1521/XEPDB1
 services:
   oracle:
     image: gvenzl/oracle-xe:21-slim

@@ -13,6 +13,16 @@ Query **Oracle** and **SQL Server** from Neovim — write SQL in any buffer, run
 
 </div>
 
+<div align="center">
+
+<a href="https://www.youtube.com/watch?v=pNn2kxlpTro">
+  <img src="https://img.youtube.com/vi/pNn2kxlpTro/maxresdefault.jpg" alt="Watch the dblite.nvim demo on YouTube" width="640" />
+</a>
+
+<sub>▶ <b><a href="https://www.youtube.com/watch?v=pNn2kxlpTro">Watch the demo on YouTube</a></b></sub>
+
+</div>
+
 The database work runs in a native binary (GraalVM), so there's **no JVM at runtime** — it's downloaded pre-built on install, falling back to a source build only if no binary matches your platform.
 
 <!-- DEMO SCREENSHOT: save the screenshot to the repo root as `dblite_demo.png`,
