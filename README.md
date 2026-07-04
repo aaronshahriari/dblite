@@ -1,12 +1,10 @@
 <div align="center">
 
-<img src="dblite_logo.png" alt="dblite.nvim" width="380" />
+<img src="dblite_logo.png" alt="dblite.nvim" width="200" />
 
-Query **Oracle** and **SQL Server** from Neovim — write SQL in any buffer, run it, and page through results in a split.
+# dblite.nvim
 
-<sub>Named connections · Typed binds · Result history · Exports · SQL completion</sub>
-
-<br>
+Query **Oracle** and **SQL Server** from Neovim — write SQL in any buffer, run it, and page results in a split.
 
 ![Neovim 0.11+](https://img.shields.io/badge/Neovim-0.11+-4c566a?style=flat-square&logo=neovim&logoColor=white)
 ![GraalVM native](https://img.shields.io/badge/GraalVM-native%20·%20no%20JVM-4c566a?style=flat-square)
