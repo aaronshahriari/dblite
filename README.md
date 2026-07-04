@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="dblite_dark.png" alt="dblite.nvim" width="280" />
+<img src="dblite_logo.png" alt="dblite.nvim" width="280" />
 
 Query **Oracle** and **SQL Server** from Neovim — write SQL in any buffer, run it, and page through results in a split.
 
