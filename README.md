@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="dblite_logo.png" alt="dblite.nvim" width="200" />
+<img src="dblite_logo.png" alt="dblite.nvim" width="240" />
 
 # dblite.nvim
 
@@ -15,6 +15,9 @@ Query **Oracle** and **SQL Server** from Neovim — write SQL in any buffer, run
 
 The database work runs in a native binary (GraalVM), so there's **no JVM at runtime** — it's downloaded pre-built on install, falling back to a source build only if no binary matches your platform.
 
+<!-- DEMO SCREENSHOT: save the screenshot to the repo root as `dblite_demo.png`,
+     then delete this comment wrapper (the two lines marked <<< / >>>) to show it.
+<<<
 <div align="center">
 
 <img src="dblite_demo.png" alt="dblite.nvim running a query with results in the dbout split" width="900" />
@@ -22,6 +25,8 @@ The database work runs in a native binary (GraalVM), so there's **no JVM at runt
 <sub>A query in a `.sql` buffer, results paginated in the <b>dbout</b> split with timing and connection in the status line.</sub>
 
 </div>
+>>>
+-->
 
 ## Features
 
