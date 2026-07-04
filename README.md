@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="dblite_logo.png" alt="dblite.nvim" width="400" />
+<img src="dblite_logo1.svg" alt="dblite.nvim" width="400" />
 
 # dblite.nvim
 
