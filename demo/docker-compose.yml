@@ -1,0 +1,24 @@
+# Local Oracle XE for the dblite.nvim demo.
+#
+#   docker compose up -d      # start (first run pulls ~2GB, then seeds the schema)
+#   docker compose logs -f    # watch for "DATABASE IS READY TO USE"
+#   docker compose down       # stop and remove (data is ephemeral, re-seeds next up)
+#
+# Connects as SYSTEM to the XEPDB1 pluggable database — the README quickstart URI:
+#   oracle://system:oracle@localhost:1521/XEPDB1
+services:
+  oracle:
+    image: gvenzl/oracle-xe:21-slim
+    container_name: dblite-demo-oracle
+    ports:
+      - "1521:1521"
+    environment:
+      ORACLE_PASSWORD: oracle
+    volumes:
+      # Scripts here run once, on first database creation, against XEPDB1 as SYSTEM.
+      - ./init:/container-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
