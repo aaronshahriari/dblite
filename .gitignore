@@ -1,3 +1,7 @@
+# sql testing
+test.sql
+dblite.binds.json
+
 # Maven build output
 target/
 

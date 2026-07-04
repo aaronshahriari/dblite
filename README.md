@@ -1,10 +1,29 @@
-# dblite.nvim
+<div align="center">
 
-Query **Oracle** and **SQL Server** from Neovim. Write SQL in any buffer, run it, and get paginated results in a split — with named connections, typed bind parameters, result history, exports, and context-aware SQL completion.
+<img src="dblite_dark.png" alt="dblite.nvim" width="280" />
+
+Query **Oracle** and **SQL Server** from Neovim — write SQL in any buffer, run it, and page through results in a split.
+
+<sub>Named connections · Typed binds · Result history · Exports · SQL completion</sub>
+
+<br>
+
+![Neovim 0.11+](https://img.shields.io/badge/Neovim-0.11+-4c566a?style=flat-square&logo=neovim&logoColor=white)
+![GraalVM native](https://img.shields.io/badge/GraalVM-native%20·%20no%20JVM-4c566a?style=flat-square)
+
+[Features](#features) · [Install](#installation) · [Quick start](#quick-start) · [Configuration](#configuration)
+
+</div>
 
 The database work runs in a native binary (GraalVM), so there's **no JVM at runtime** — it's downloaded pre-built on install, falling back to a source build only if no binary matches your platform.
 
-<!-- Add a screenshot or gif of the result split here — it's the single biggest thing for a Reddit post. -->
+<div align="center">
+
+<img src="dblite_demo.png" alt="dblite.nvim running a query with results in the dbout split" width="900" />
+
+<sub>A query in a `.sql` buffer, results paginated in the <b>dbout</b> split with timing and connection in the status line.</sub>
+
+</div>
 
 ## Features
 
