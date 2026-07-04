@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="dblite_logo.png" alt="dblite.nvim" width="240" />
+<img src="dblite_logo.png" alt="dblite.nvim" width="400" />
 
 # dblite.nvim
 
@@ -410,4 +410,4 @@ Full reference is also available in `:help dblite`.
 
 ## License
 
-_No license has been chosen yet._
+[MIT](LICENSE) © 2026 Aaron Shahriari
