@@ -494,6 +494,10 @@ local function configure_result_buffer(bufnr)
     render_page()
   end, "dblite: toggle column types")
 
+  map(km.toggle_dbout, function()
+    M.toggle_dbout()
+  end, "dblite: toggle result window")
+
   local ek = (config.keymaps and config.keymaps.editor) or {}
   map(ek.fullscreen or "<leader>l", function()
     M.toggle_fullscreen()

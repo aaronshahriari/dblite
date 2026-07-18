@@ -101,6 +101,7 @@ local M = {
       history_next = "]",       -- next query result in history
       hover_query  = "K",       -- hover to show the executed query
       toggle_types = "d",       -- toggle column type annotations
+      toggle_dbout = "",        -- show/hide the result window from inside dbout
     },
     -- Editor keymaps are buffer-local and set ONLY in SQL buffers (see
     -- `filetypes` below), so they never fire in unrelated buffers/windows.
@@ -124,6 +125,7 @@ local M = {
       select = "<CR>", -- activate connection under cursor
       edit   = "cw",   -- edit connection under cursor
       close  = "q",    -- close panel
+      toggle = "",     -- toggle the panel from inside
     },
     jobs = {     -- keymaps active inside the background-jobs panel
       open   = "<CR>", -- open the output file of the job under cursor

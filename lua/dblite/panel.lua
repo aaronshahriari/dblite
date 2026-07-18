@@ -146,6 +146,10 @@ local function setup_keymaps(bufnr)
   map(km.close or "q", function()
     M.close()
   end, "dblite: close panel")
+
+  map(km.toggle, function()
+    M.toggle()
+  end, "dblite: toggle panel")
 end
 
 function M.open()
