@@ -92,6 +92,19 @@ local M = {
     },
   },
   keymaps = {
+    global = {  -- normal-mode keymaps active from any buffer/window; all disabled by default
+      run           = "", -- run the whole buffer
+      run_at        = "", -- run the statement under the cursor
+      run_script    = "", -- run the buffer as a SQL*Plus script
+      run_bulk      = "", -- background bulk export to a file
+      toggle_dbout  = "", -- show/hide the result window
+      toggle_panel  = "", -- toggle the connections panel
+      toggle_jobs   = "", -- toggle the background-jobs panel
+      toggle_binds  = "", -- toggle dblite.binds.json
+      inspect       = "", -- inspect current page untruncated
+      fullscreen    = "", -- toggle dbout fullscreen
+      connections   = "", -- open the connections JSON file
+    },
     dbout = {  -- keymaps active inside the result/output buffer
       next    = "L",       -- next page (set to "" or false to disable)
       prev    = "H",       -- prev page
@@ -126,6 +139,9 @@ local M = {
       edit   = "cw",   -- edit connection under cursor
       close  = "q",    -- close panel
       toggle = "",     -- toggle the panel from inside
+    },
+    binds = {     -- keymaps active inside dblite.binds.json
+      toggle = "",     -- toggle the binds window from inside
     },
     jobs = {     -- keymaps active inside the background-jobs panel
       open   = "<CR>", -- open the output file of the job under cursor

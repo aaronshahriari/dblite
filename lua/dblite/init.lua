@@ -81,6 +81,38 @@ local EDITOR_ACTIONS = {
   { key = "hover_bind",   desc = "hover bind value",        fn = function() M.hover_bind() end },
 }
 
+local GLOBAL_ACTIONS = {
+  { key = "run",          desc = "run buffer",              fn = function() M.execute() end },
+  { key = "run_at",       desc = "run statement at cursor", fn = function() M.execute_at_cursor() end },
+  { key = "run_script",   desc = "run buffer as script",    fn = function() M.execute_script() end },
+  { key = "run_bulk",     desc = "bulk background export",  fn = function() M.run_async() end },
+  { key = "toggle_dbout", desc = "toggle result window",    fn = function() M.toggle_dbout() end },
+  { key = "toggle_panel", desc = "toggle connections panel",fn = function() M.toggle_panel() end },
+  { key = "toggle_jobs",  desc = "toggle jobs panel",       fn = function() M.toggle_jobs() end },
+  { key = "toggle_binds", desc = "toggle binds window",     fn = function() M.toggle_binds() end },
+  { key = "inspect",      desc = "inspect current page",    fn = function() M.inspect() end },
+  { key = "fullscreen",   desc = "toggle dbout fullscreen", fn = function() M.toggle_fullscreen() end },
+  { key = "connections",  desc = "edit connections file",   fn = function() M.edit_connections_file() end },
+}
+
+local installed_global_keymaps = {}
+
+local function apply_global_keymaps()
+  for _, lhs in pairs(installed_global_keymaps) do
+    pcall(vim.keymap.del, "n", lhs)
+  end
+  installed_global_keymaps = {}
+
+  local gk = (config.keymaps and config.keymaps.global) or {}
+  for _, a in ipairs(GLOBAL_ACTIONS) do
+    local lhs = gk[a.key]
+    if lhs and lhs ~= "" then
+      vim.keymap.set("n", lhs, a.fn, { silent = true, desc = "dblite: " .. a.desc })
+      installed_global_keymaps[a.key] = lhs
+    end
+  end
+end
+
 -- Apply dblite's buffer-local editor keymaps to `buf`, then run the user's
 -- on_attach hook. Exposed so users who manage attachment themselves can call it.
 function M.attach(buf)
@@ -102,6 +134,7 @@ end
 
 function M.setup(opts)
   if opts then merge_into(config, opts) end
+  apply_global_keymaps()
   -- SQL-only keymaps + on_attach: applied per-buffer via a FileType autocmd, so
   -- they are always buffer-local and never fire in unrelated buffers/windows.
   local fts = config.filetypes or { "sql", "plsql", "mysql", "sqlite" }
@@ -1703,6 +1736,15 @@ local function ensure_binds_file()
   return path
 end
 
+local function setup_binds_keymaps(bufnr)
+  local km = config.keymaps and config.keymaps.binds or {}
+  if km.toggle and km.toggle ~= "" then
+    vim.keymap.set("n", km.toggle, function()
+      M.toggle_binds()
+    end, { buffer = bufnr, silent = true, desc = "dblite: toggle binds window" })
+  end
+end
+
 local function open_binds_split()
   local path = ensure_binds_file()
   local split_cfg = config.binds_split or {}
@@ -1727,6 +1769,7 @@ local function open_binds_split()
       col       = col,
     })
     vim.bo[bufnr].filetype = "json"
+    setup_binds_keymaps(bufnr)
     _binds_win = winnr
     vim.api.nvim_create_autocmd("WinClosed", {
       pattern  = tostring(winnr),
@@ -1748,6 +1791,7 @@ local function open_binds_split()
     vim.cmd(size .. "split " .. vim.fn.fnameescape(path))
   end
   _binds_win = vim.api.nvim_get_current_win()
+  setup_binds_keymaps(vim.api.nvim_get_current_buf())
   vim.api.nvim_create_autocmd("WinClosed", {
     pattern  = tostring(_binds_win),
     once     = true,

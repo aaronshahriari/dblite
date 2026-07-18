@@ -230,16 +230,16 @@ The binds window is a vertical split by default; set `binds_split.style = 'float
 :DbliteRunBulk csv                      " omit the path to be prompted (with completion)
 ```
 
-Jobs run in the background, so you can keep running normal queries meanwhile. `:Dblite jobs` (or `:DbliteJobs`) toggles a **jobs panel** showing each background export with a live spinner + elapsed seconds while running, then `✓` and the final row count when done (or `✗` with the error).
+Jobs run in the background, so you can keep running normal queries meanwhile. `:Dblite jobs` (or `:DbliteJobs`) toggles a floating **jobs panel** showing status, output file name, duration, and exported row count.
 
-**Persistent history:** finished jobs are recorded to a shared store (`stdpath('data')/dblite/jobs.json` by default), so the panel shows your past exports — with how long ago they finished, their duration, and row count — even across restarts and **across every Neovim instance** on the machine. Control it via `jobs.history`: `show` (how many past jobs to display, e.g. last 10/50), `max_entries` (how many to keep on disk), or `enabled = false` for in-memory only. Dismissing a finished entry (`x`) deletes it from the store; running jobs are never persisted (so a killed instance leaves no stuck "running" entry).
+**Persistent history:** finished jobs are recorded to a shared store (`stdpath('data')/dblite/jobs.json` by default), so the panel shows your past exports even across restarts and **across every Neovim instance** on the machine. Control it via `jobs.history`: `show` (how many past jobs to display, e.g. last 10/50), `max_entries` (how many to keep on disk), or `enabled = false` for in-memory only. Deleting a finished entry (`x`) prompts first, then removes it from the store; cancelling a running job also prompts first.
 
 **Jobs panel keymaps:**
 
 | Key | Action |
 |---|---|
 | `<CR>` | Open the output file of the job under the cursor in a new tab |
-| `x` | Cancel a running job / dismiss a finished one |
+| `x` | Cancel a running job / delete a finished one from history |
 | `q` | Close the panel |
 | `keymaps.jobs.toggle` | Toggle the panel from inside (off by default; set to your open key for symmetry) |
 
@@ -484,9 +484,23 @@ require('dblite').setup({
     },
   },
   keymaps = {
+    global = {  -- active from any buffer/window. '' = disabled.
+      run           = '',          -- run the whole buffer
+      run_at        = '',          -- run the statement under the cursor
+      run_script    = '',          -- run the buffer as a SQL*Plus script
+      run_bulk      = '',          -- background bulk export to a file
+      toggle_dbout  = '',          -- show/hide the result window
+      toggle_panel  = '',          -- toggle the connections panel
+      toggle_jobs   = '',          -- toggle the background-jobs panel
+      toggle_binds  = '',          -- toggle dblite.binds.json
+      inspect       = '',          -- inspect current page untruncated
+      fullscreen    = '',          -- toggle dbout fullscreen
+      connections   = '',          -- open the connections JSON file
+    },
     dbout = {
       next = 'L', prev = 'H', cancel = '<C-c>', inspect = 'gi',
       history_prev = '[', history_next = ']', hover_query = 'K', toggle_types = 'd',
+      toggle_dbout = '',
     },
     editor = {  -- buffer-local, set only in `filetypes` buffers. '' = disabled.
       run          = '',          -- run the whole buffer
@@ -502,7 +516,8 @@ require('dblite').setup({
       fullscreen   = '<leader>l', -- toggle dbout fullscreen
       hover_bind   = 'K',         -- hover the bind value under the cursor
     },
-    panel = { select = '<CR>', edit = 'cw', close = 'q' },
+    panel = { select = '<CR>', edit = 'cw', close = 'q', toggle = '' },
+    binds = { toggle = '' },
     jobs  = { open = '<CR>', cancel = 'x', close = 'q', toggle = '' },  -- background-jobs panel
     load  = { commit = '<CR>', cancel = 'q' },  -- CSV-load preview buffer
   },
@@ -514,7 +529,21 @@ require('dblite').setup({
 <details>
 <summary><b>Custom keybindings</b></summary>
 
-dblite's editor keymaps are **buffer-local** and set only in the buffers listed in `filetypes` (default `sql`, `plsql`, `mysql`, `sqlite`), so they never fire in unrelated buffers or windows — no hand-rolled autocmds needed. Every action defaults to `''` (disabled); set an lhs to turn it on:
+dblite supports optional global keymaps for cross-cutting actions that should work from anywhere. They all default to `''` (disabled):
+
+```lua
+require('dblite').setup({
+  keymaps = {
+    global = {
+      toggle_dbout = '<leader>o',
+      toggle_jobs  = '<leader>j',
+      toggle_binds = '<leader>b',
+    },
+  },
+})
+```
+
+Editor keymaps remain **buffer-local** and are set only in the buffers listed in `filetypes` (default `sql`, `plsql`, `mysql`, `sqlite`), so they never fire in unrelated buffers or windows. Use them for SQL-buffer-only actions:
 
 ```lua
 require('dblite').setup({

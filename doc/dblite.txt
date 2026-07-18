@@ -176,18 +176,17 @@ buffers the result in the editor, so it handles arbitrarily large exports
 queries while it churns. There is no client-side query timeout, so a bulk
 export runs until the database returns.
 
-`:Dblite jobs` (or |:DbliteJobs|) toggles the jobs panel, which lists each
-background export with a live spinner + elapsed seconds while running, then a
-`✓` and the final row count when done (or `✗` with the error). In the panel:
-`<CR>` opens a finished job's output file in a new tab, `x` cancels a running
-job (or dismisses a finished one, deleting it from history), `q` closes it.
-Keys are configurable via `keymaps.jobs`; panel width and behaviour via the
-`jobs` config table.
+`:Dblite jobs` (or |:DbliteJobs|) toggles the floating jobs panel, which lists
+each background export with status, output file name, duration, and exported
+row count. In the panel: `<CR>` opens a finished job's output file in a new tab,
+`x` prompts to cancel a running job (or delete a finished one from history), and
+`q` closes it. Keys are configurable via `keymaps.jobs`; panel size and
+behaviour via the `jobs` config table.
 
 Finished jobs are recorded to a shared store (default
-`stdpath('data')/dblite/jobs.json`), so the panel shows past exports — with how
-long ago they finished, their duration and row count — across restarts and
-across every Neovim instance on the machine. Configure via `jobs.history`:
+`stdpath('data')/dblite/jobs.json`), so the panel shows past exports across
+restarts and across every Neovim instance on the machine. Configure via
+`jobs.history`:
 `show` (how many past jobs to display), `max_entries` (how many to keep on
 disk), `enabled = false` (in-memory only), or `file` (override the location).
 Running jobs are never persisted, so a killed instance leaves no stuck
@@ -461,9 +460,26 @@ The unified :Dblite forms and these individual commands are equivalent;
 15. KEYMAPS						*dblite-keymaps*
 
 dblite sets keymaps in several scopes. All are configurable (see
-|dblite-config|); set any mapping to "" or false to disable it. Editor maps are
-buffer-local (set only in `filetypes` buffers), so they never fire in unrelated
-buffers or windows — no hand-rolled autocmds needed.
+|dblite-config|); set any mapping to "" or false to disable it.
+
+global ~  (active from any buffer/window; all unset by default)
+
+Use global maps for cross-cutting actions you want available everywhere:
+
+  `keymaps.global.run`             run the whole buffer
+  `keymaps.global.run_at`          run the statement under the cursor
+  `keymaps.global.run_script`      run the buffer as a SQL*Plus script
+  `keymaps.global.run_bulk`        background bulk export to a file
+  `keymaps.global.toggle_dbout`    show/hide the result window
+  `keymaps.global.toggle_panel`    toggle the connections panel
+  `keymaps.global.toggle_jobs`     toggle the background-jobs panel
+  `keymaps.global.toggle_binds`    toggle dblite.binds.json
+  `keymaps.global.inspect`         inspect the current page untruncated
+  `keymaps.global.fullscreen`      toggle dbout fullscreen
+  `keymaps.global.connections`     open the connections JSON file
+
+Editor maps are buffer-local (set only in `filetypes` buffers), so they never
+fire in unrelated buffers or windows — no hand-rolled autocmds needed.
 
 dbout buffer ~  (active only inside the result buffer)
 
@@ -475,6 +491,7 @@ dbout buffer ~  (active only inside the result buffer)
 	`d`		toggle column types	`keymaps.dbout.toggle_types`
 	`gi`		inspect page		`keymaps.dbout.inspect`
 	`<C-c>`		cancel query		`keymaps.dbout.cancel`
+	(unset)	toggle dbout		`keymaps.dbout.toggle_dbout`
 
 editor (SQL buffers) ~  (buffer-local; set on the `filetypes` buffers)
 
@@ -505,17 +522,23 @@ panel ~  (active inside the connections panel)
 	`<CR>`		activate connection	`keymaps.panel.select`
 	`cw`		edit connection		`keymaps.panel.edit`
 	`q`		close panel		`keymaps.panel.close`
+	(unset)	toggle from inside	`keymaps.panel.toggle`
+
+binds ~  (active inside dblite.binds.json)
+
+	(unset)	toggle from inside	`keymaps.binds.toggle`
 
 jobs ~  (active inside the background-jobs panel)
 
 	`<CR>`		open job output file	`keymaps.jobs.open`
-	`x`		cancel / dismiss job	`keymaps.jobs.cancel`
+	`x`		cancel / delete job	`keymaps.jobs.cancel`
 	`q`		close panel		`keymaps.jobs.close`
 	(unset)		toggle from inside	`keymaps.jobs.toggle`
 			(set to your open key for symmetry)
 
-dblite binds no query-running keys by default; enable them via `keymaps.editor`
-above, `on_attach`, or against the |dblite-api|.
+dblite binds no query-running keys globally by default; enable them via
+`keymaps.global`, SQL-only maps via `keymaps.editor`, custom maps via
+`on_attach`, or map directly against the |dblite-api|.
 
 ==============================================================================
 16. CONFIGURATION					*dblite-config*
@@ -567,6 +590,19 @@ defaults, so you only need to specify what you change. Defaults: >lua
 	    },
 	  },
 	  keymaps = {
+	    global = {  -- active from any buffer/window; '' = disabled
+	      run           = '',
+	      run_at        = '',
+	      run_script    = '',
+	      run_bulk      = '',
+	      toggle_dbout  = '',
+	      toggle_panel  = '',
+	      toggle_jobs   = '',
+	      toggle_binds  = '',
+	      inspect       = '',
+	      fullscreen    = '',
+	      connections   = '',
+	    },
 	    dbout = {
 	      next         = 'L',
 	      prev         = 'H',
@@ -576,6 +612,7 @@ defaults, so you only need to specify what you change. Defaults: >lua
 	      history_next = ']',
 	      hover_query  = 'K',
 	      toggle_types = 'd',
+	      toggle_dbout = '',
 	    },
 	    editor = {  -- buffer-local (SQL buffers only); '' = disabled
 	      run          = '',    -- run the whole buffer
@@ -591,7 +628,8 @@ defaults, so you only need to specify what you change. Defaults: >lua
 	      fullscreen   = '<leader>l',
 	      hover_bind   = 'K',
 	    },
-	    panel = { select = '<CR>', edit = 'cw', close = 'q' },
+	    panel = { select = '<CR>', edit = 'cw', close = 'q', toggle = '' },
+	    binds = { toggle = '' },
 	    jobs  = { open = '<CR>', cancel = 'x', close = 'q', toggle = '' },
 	    load  = { commit = '<CR>', cancel = 'q' },
 	  },
