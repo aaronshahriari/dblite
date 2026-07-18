@@ -26,6 +26,8 @@ public class App {
 
         int maxRows = 0;
         boolean scriptMode = false;
+        String toFile = null;
+        String format = "csv";
         for (int i = 0; i < args.length; i++) {
             if ("--max-rows".equals(args[i]) && i + 1 < args.length) {
                 try {
@@ -36,6 +38,10 @@ public class App {
                 }
             } else if ("--script".equals(args[i])) {
                 scriptMode = true;
+            } else if ("--to-file".equals(args[i]) && i + 1 < args.length) {
+                toFile = args[++i];
+            } else if ("--format".equals(args[i]) && i + 1 < args.length) {
+                format = args[++i];
             }
         }
 
@@ -66,10 +72,18 @@ public class App {
              Statement stmt = conn.createStatement()) {
 
             if (maxRows > 0) stmt.setMaxRows(maxRows);
+            // Bulk dumps stream to a file; a larger fetch size drastically cuts
+            // round-trips on big result sets (Oracle defaults to 10 rows/fetch).
+            if (toFile != null) stmt.setFetchSize(1000);
 
             boolean hasResultSet = stmt.execute(query);
 
-            if (hasResultSet) {
+            if (hasResultSet && toFile != null) {
+                try (ResultSet rs = stmt.getResultSet()) {
+                    ResultSetMetaData meta = rs.getMetaData();
+                    writeToFile(rs, meta, meta.getColumnCount(), toFile, format);
+                }
+            } else if (hasResultSet) {
                 try (ResultSet rs = stmt.getResultSet()) {
                     ResultSetMetaData meta = rs.getMetaData();
                     int columnCount = meta.getColumnCount();
@@ -295,6 +309,88 @@ public class App {
         if (s.length() == w.length()) return true;
         char c = s.charAt(w.length());
         return !(Character.isLetterOrDigit(c) || c == '_');
+    }
+
+    // --- Bulk file dump ----------------------------------------------------
+    // Streams the full result set straight to `path` (CSV or JSON) row by row,
+    // so arbitrarily large exports never buffer in memory. Emits a small JSON
+    // summary to stdout on completion so the caller can report the row count.
+    private static void writeToFile(ResultSet rs, ResultSetMetaData meta, int columnCount,
+                                    String path, String format) throws Exception {
+        boolean json = "json".equalsIgnoreCase(format);
+        long rowCount = 0;
+        try (java.io.BufferedWriter w = java.nio.file.Files.newBufferedWriter(
+                java.nio.file.Paths.get(path), java.nio.charset.StandardCharsets.UTF_8)) {
+            if (json) {
+                w.write("{\"columns\": [");
+                for (int i = 1; i <= columnCount; i++) {
+                    if (i > 1) w.write(", ");
+                    w.write("\"" + escape(meta.getColumnLabel(i)) + "\"");
+                }
+                w.write("],\n\"column_types\": [");
+                for (int i = 1; i <= columnCount; i++) {
+                    if (i > 1) w.write(", ");
+                    w.write("\"" + escape(meta.getColumnTypeName(i)) + "\"");
+                }
+                w.write("],\n\"rows\": [\n");
+                while (rs.next()) {
+                    if (rowCount > 0) w.write(",\n");
+                    w.write("  {");
+                    for (int i = 1; i <= columnCount; i++) {
+                        if (i > 1) w.write(", ");
+                        w.write("\"" + escape(meta.getColumnLabel(i)) + "\": ");
+                        w.write(formatValue(rs, i, meta.getColumnType(i)));
+                    }
+                    w.write("}");
+                    rowCount++;
+                }
+                w.write("\n]}\n");
+            } else {
+                for (int i = 1; i <= columnCount; i++) {
+                    if (i > 1) w.write(",");
+                    w.write(csvEscape(meta.getColumnLabel(i)));
+                }
+                w.write("\n");
+                while (rs.next()) {
+                    for (int i = 1; i <= columnCount; i++) {
+                        if (i > 1) w.write(",");
+                        w.write(csvEscape(csvValue(rs, i, meta.getColumnType(i))));
+                    }
+                    w.write("\n");
+                    rowCount++;
+                }
+            }
+        }
+        System.out.println("{\"to_file\": true, \"format\": \"" + escape(format)
+            + "\", \"path\": \"" + escape(path) + "\", \"rows\": " + rowCount + "}");
+    }
+
+    // Plain (un-quoted) string form of a cell, for CSV output.
+    private static String csvValue(ResultSet rs, int col, int sqlType) throws java.sql.SQLException {
+        if (sqlType == Types.BLOB) {
+            java.sql.Blob blob = rs.getBlob(col);
+            if (blob == null || rs.wasNull()) return "";
+            return "<BLOB " + blob.length() + " bytes>";
+        }
+        if (sqlType == Types.CLOB || sqlType == Types.NCLOB) {
+            java.sql.Clob clob = rs.getClob(col);
+            if (clob == null || rs.wasNull()) return "";
+            return clob.getSubString(1, (int) Math.min(clob.length(), 1_000_000));
+        }
+        String raw = rs.getString(col);
+        if (raw == null || rs.wasNull()) return "";
+        return raw;
+    }
+
+    // Mirrors the Lua CSV escaper: newlines become the literal "\n", and a field
+    // containing a comma or quote is wrapped in quotes with quotes doubled.
+    private static String csvEscape(String val) {
+        if (val == null) val = "";
+        String s = val.replace("\r\n", "\\n").replace("\n", "\\n").replace("\r", "\\n");
+        if (s.indexOf(',') >= 0 || s.indexOf('"') >= 0) {
+            s = "\"" + s.replace("\"", "\"\"") + "\"";
+        }
+        return s;
     }
 
     private static String formatValue(ResultSet rs, int col, int sqlType) throws java.sql.SQLException {

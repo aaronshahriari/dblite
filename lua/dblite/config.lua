@@ -26,6 +26,12 @@ local M = {
   panel = {
     width = 30,  -- columns for the side panel
   },
+  jobs = {  -- background (async) bulk-export jobs — see `:Dblite run bulk`
+    panel = { width = 46 },  -- columns for the background-jobs panel
+    cleanup_delay  = 300,    -- seconds a finished job lingers in the panel before auto-removal (0 = keep until dismissed)
+    default_format = "csv",  -- default output format for bulk exports: "csv" | "json"
+    open_on_start  = true,   -- pop the jobs panel open automatically when a bulk export starts
+  },
   -- How `:DblitePanel` / `M.toggle_panel()` select a connection:
   --   "panel"     → the built-in side panel (default)
   --   "telescope" → a telescope.nvim picker (requires nvim-telescope/telescope.nvim)
@@ -84,6 +90,11 @@ local M = {
       select = "<CR>", -- activate connection under cursor
       edit   = "cw",   -- edit connection under cursor
       close  = "q",    -- close panel
+    },
+    jobs = {     -- keymaps active inside the background-jobs panel
+      open   = "<CR>", -- open the output file of the job under cursor
+      cancel = "x",    -- cancel a running job / dismiss a finished one
+      close  = "q",    -- close the jobs panel
     },
     load = {     -- keymaps active inside the CSV-load preview buffer
       commit = "<CR>", -- run the generated INSERTs

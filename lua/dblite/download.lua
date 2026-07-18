@@ -101,25 +101,32 @@ end
 
 -- Try downloading a pre-built binary from GitHub Releases; fall back to Maven build.
 -- Runs synchronously (suspends coroutine, does not block the event loop).
-function M.download_or_build()
+-- opts.force_build skips the download entirely and builds straight from source
+-- (use when the local source is ahead of the latest release).
+function M.download_or_build(opts)
+  opts = opts or {}
   local root = plugin_root()
   if not root then
     vim.notify("dblite: cannot determine plugin root", vim.log.levels.ERROR)
     return
   end
 
-  vim.notify("dblite: downloading binary...", vim.log.levels.INFO)
-  local dl_err = try_download(root)
+  if not opts.force_build then
+    vim.notify("dblite: downloading binary...", vim.log.levels.INFO)
+    local dl_err = try_download(root)
 
-  if not dl_err then
-    vim.notify("dblite: binary downloaded", vim.log.levels.INFO)
-    return
+    if not dl_err then
+      vim.notify("dblite: binary downloaded", vim.log.levels.INFO)
+      return
+    end
+
+    vim.notify(
+      ("dblite: download skipped (%s) — building from source (this takes a few minutes)..."):format(dl_err),
+      vim.log.levels.WARN
+    )
+  else
+    vim.notify("dblite: building from source (this takes a few minutes)...", vim.log.levels.INFO)
   end
-
-  vim.notify(
-    ("dblite: download skipped (%s) — building from source (this takes a few minutes)..."):format(dl_err),
-    vim.log.levels.WARN
-  )
 
   local build_err = try_build(root)
   if build_err then

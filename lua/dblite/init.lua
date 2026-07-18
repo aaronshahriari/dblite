@@ -4,6 +4,7 @@ local panel        = require("dblite.panel")
 local telescope    = require("dblite.telescope")
 local query_module = require("dblite.query")
 local load_mod     = require("dblite.load")
+local jobs         = require("dblite.jobs")
 
 local M = {}
 
@@ -839,13 +840,152 @@ function M.execute_script(opts)
   execute_core(query, true)
 end
 
+-- Run the query at the cursor (or, failing that, the whole buffer) as a
+-- background bulk export: the native binary streams the full result set
+-- straight to `path` (no --max-rows cap, no in-editor buffering) while the
+-- user keeps working. Progress shows in the jobs panel (:DbliteJobs).
+function M.run_async(format, path)
+  format = (format or (config.jobs and config.jobs.default_format) or "csv"):lower()
+  if format ~= "csv" and format ~= "json" then
+    vim.notify("dblite: bulk format must be 'csv' or 'json'", vim.log.levels.ERROR)
+    return
+  end
+
+  if vim.fn.executable(config.binary) ~= 1 then
+    local hint = _plugin_root
+      and "run :DbliteBuild to compile the native binary"
+      or  "binary 'dblite' not found on PATH — run the build first"
+    vim.notify("dblite: " .. hint, vim.log.levels.ERROR)
+    return
+  end
+
+  if not state.active_conn then
+    vim.notify("dblite: no active connection — use :DbliteUseConn <name>", vim.log.levels.ERROR)
+    return
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local sr, sc, er, ec, query = query_module.at_cursor(bufnr)
+  if not query or query:match("^%s*$") then
+    query = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
+    sr = nil
+  end
+  if query:match("^%s*$") then
+    vim.notify("dblite: nothing to run", vim.log.levels.WARN)
+    return
+  end
+
+  -- Resolve binds before we prompt for a path, so missing binds fail fast.
+  local final_q = query
+  local bind_names = parse_bind_names(query)
+  if #bind_names > 0 then
+    local file_binds = flatten_binds(load_binds_file())
+    local missing = vim.tbl_filter(function(n) return file_binds[n] == nil end, bind_names)
+    if #missing > 0 then
+      vim.notify(
+        "dblite: missing bind params: " .. table.concat(missing, ", ")
+        .. "\nAdd them to dblite.binds.json and re-run.",
+        vim.log.levels.WARN)
+      M.open_binds()
+      return
+    end
+    final_q = apply_binds(query, file_binds)
+  end
+
+  if not path or path == "" then
+    local default = "dblite_bulk." .. format
+    path = vim.fn.input({ prompt = "Bulk export to: ", default = default, completion = "file" })
+    if path == "" then
+      vim.notify("dblite: bulk export cancelled", vim.log.levels.INFO)
+      return
+    end
+  end
+  path = vim.fn.fnamemodify(vim.fn.expand(path), ":p")
+  vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
+
+  if sr then set_flash(bufnr, sr, sc, er, ec) end
+
+  local c = state.active_conn
+  local sys_env = { DB_URL = connections.jdbc_url(c) }
+  if c.auth ~= "kerberos" then
+    sys_env.DB_USER     = expand_env(c.user)
+    sys_env.DB_PASSWORD = expand_env(c.password or "")
+  end
+
+  local cmd = { config.binary, "--to-file", path, "--format", format }
+
+  local id = jobs.register({
+    label     = vim.fn.fnamemodify(path, ":t"),
+    path      = path,
+    format    = format,
+    conn_name = c.name,
+    query     = query,
+  })
+
+  local job
+  job = vim.system(cmd, { stdin = final_q, text = true, env = sys_env }, function(result)
+    vim.schedule(function()
+      if result.signal ~= 0 then
+        jobs.finish(id, { status = "cancelled" })
+        return
+      end
+      if result.code ~= 0 then
+        jobs.finish(id, { status = "error", error = (result.stderr or ""):gsub("%s+$", "") })
+        vim.notify("dblite: bulk export failed — " .. (result.stderr or ""), vim.log.levels.ERROR)
+        return
+      end
+      local ok, parsed = pcall(vim.json.decode, result.stdout)
+      local rows
+      if ok and type(parsed) == "table" then
+        rows = parsed.rows or parsed.update_count
+      end
+      jobs.finish(id, { status = "done", rows = rows })
+      vim.notify(string.format("dblite: bulk export finished — %s row(s) → %s",
+        rows ~= nil and tostring(rows) or "?", path), vim.log.levels.INFO)
+    end)
+  end)
+  jobs.set_handle(id, job)
+
+  if not (config.jobs and config.jobs.open_on_start == false) then
+    jobs.open({ focus = false })
+  end
+  vim.notify("dblite: bulk export started → " .. path, vim.log.levels.INFO)
+end
+
+-- Jobs panel public API
+M.toggle_jobs = jobs.toggle
+M.open_jobs   = jobs.open
+M.close_jobs  = jobs.close
+M.is_jobs_open = jobs.is_open
+
 vim.api.nvim_create_user_command("DbliteRun",   M.execute,           {})
 vim.api.nvim_create_user_command("DbliteRunAt", M.execute_at_cursor, {})
 vim.api.nvim_create_user_command("DbliteRunScript", M.execute_script, { range = true })
 
--- :DbliteBuild — download pre-built binary from GitHub Releases, or build from source
-vim.api.nvim_create_user_command("DbliteBuild", function()
-  require("dblite.download").download_or_build()
+-- :DbliteRunBulk <csv|json> [path] — run the current query as a background dump
+vim.api.nvim_create_user_command("DbliteRunBulk", function(opts)
+  local fmt  = opts.fargs[1]
+  local path = opts.fargs[2] and table.concat(vim.list_slice(opts.fargs, 2), " ") or nil
+  M.run_async(fmt, path)
+end, {
+  nargs = "*",
+  complete = function(arg_lead, cmd_line)
+    local n = #vim.split(cmd_line, "%s+")
+    if n <= 2 then
+      return vim.tbl_filter(function(k) return k:sub(1, #arg_lead) == arg_lead end, { "csv", "json" })
+    end
+    return vim.fn.getcompletion(arg_lead, "file")
+  end,
+})
+
+vim.api.nvim_create_user_command("DbliteJobs", function() jobs.toggle() end, {})
+
+-- :DbliteBuild  — download a pre-built binary from GitHub Releases, or build
+--                 from source if none matches the platform.
+-- :DbliteBuild! — skip the download and always build from source (use when the
+--                 local source is ahead of the latest release).
+vim.api.nvim_create_user_command("DbliteBuild", function(opts)
+  require("dblite.download").download_or_build({ force_build = opts.bang })
   -- Re-resolve binary path in case it was just created
   if _plugin_root then
     local bin = _plugin_root .. "/bin/dblite"
@@ -853,7 +993,7 @@ vim.api.nvim_create_user_command("DbliteBuild", function()
       config.binary = bin
     end
   end
-end, {})
+end, { bang = true })
 
 -- Returns sorted list of saved connection names (used for tab-completion).
 local function conn_names()
@@ -1631,12 +1771,17 @@ do
     run           = function(a)
       if     a[2] == "at"     then M.execute_at_cursor()
       elseif a[2] == "script" then M.execute_script()
+      elseif a[2] == "bulk"   then
+        local path = #a >= 4 and table.concat(vim.list_slice(a, 4), " ") or nil
+        M.run_async(a[3], path)
       else M.execute() end
     end,
+    jobs          = function() jobs.toggle() end,
     toggle        = function(a)
       if     a[2] == "panel" then M.toggle_panel()
       elseif a[2] == "dbout" then M.toggle_dbout()
-      else vim.notify("dblite: toggle what? (panel | dbout)", vim.log.levels.ERROR) end
+      elseif a[2] == "jobs"  then jobs.toggle()
+      else vim.notify("dblite: toggle what? (panel | dbout | jobs)", vim.log.levels.ERROR) end
     end,
     conn          = function(a)
       local sub = a[2]
@@ -1649,7 +1794,7 @@ do
       elseif sub == "pick" then telescope.pick()
       else vim.notify("dblite: conn what? (add | list | use | edit | del | file | pick)", vim.log.levels.ERROR) end
     end,
-    build         = function() vim.cmd("DbliteBuild") end,
+    build         = function(a) vim.cmd(a[2] == "force" and "DbliteBuild!" or "DbliteBuild") end,
     inspect       = function(a) M.inspect(a[2]) end,
     export        = function(a)
       local path = #a >= 3 and table.concat(vim.list_slice(a, 3), " ") or nil
@@ -1664,21 +1809,27 @@ do
     local n = #tokens
     if n == 2 then
       return vim.tbl_filter(function(k) return k:sub(1, #arg_lead) == arg_lead end,
-        { "run", "toggle", "conn", "build", "inspect", "export", "binds", "load" })
+        { "run", "jobs", "toggle", "conn", "build", "inspect", "export", "binds", "load" })
     elseif n == 3 then
       local sub = tokens[2]
       local opts = {
-        run     = { "at", "script" },
-        toggle  = { "panel", "dbout" },
+        run     = { "at", "script", "bulk" },
+        jobs    = {},
+        build   = { "force" },
+        toggle  = { "panel", "dbout", "jobs" },
         conn    = { "add", "list", "use", "edit", "del", "file", "pick" },
         inspect = { "json", "table", "csv" },
         export  = { "csv", "json" },
       }
       local choices = opts[sub] or {}
       return vim.tbl_filter(function(k) return k:sub(1, #arg_lead) == arg_lead end, choices)
+    elseif n == 4 and tokens[2] == "run" and tokens[3] == "bulk" then
+      return vim.tbl_filter(function(k) return k:sub(1, #arg_lead) == arg_lead end, { "csv", "json" })
     elseif n >= 4 and tokens[2] == "conn" and (tokens[3] == "use" or tokens[3] == "edit" or tokens[3] == "del") then
       return complete_name(arg_lead)
     elseif n >= 4 and tokens[2] == "export" then
+      return vim.fn.getcompletion(arg_lead, "file")
+    elseif n >= 5 and tokens[2] == "run" and tokens[3] == "bulk" then
       return vim.fn.getcompletion(arg_lead, "file")
     end
     return {}

@@ -45,6 +45,7 @@ The database work runs in a native binary (GraalVM), so there's **no JVM at runt
 - **Named connections** with `$ENV_VAR` password references, stored at `chmod 600`.
 - **Typed bind parameters** from a `dblite.binds.json` file — numbers, quoted strings, and raw SQL expressions.
 - **Export** the entire result set (not just the current page) to CSV or JSON.
+- **Bulk background exports** — stream huge queries straight to a file asynchronously (no row cap), tracked in a jobs panel with live progress, while you keep working.
 - **Load** a CSV into a table with a SQL\*Loader-style `LOAD DATA` block — previewed as `INSERT`s before you commit.
 - **Inspect** any page untruncated as JSON, table, or CSV.
 - **SQL autocomplete** via [blink.cmp](https://github.com/Saghen/blink.cmp) — tables, columns, and bind names from the live schema.
@@ -156,6 +157,8 @@ SQL Server connections use `encrypt=true;trustServerCertificate=true` for broad 
 | `:Dblite toggle dbout` | Show/hide the result window (query keeps running if in-flight) |
 | `:Dblite inspect [json\|table\|csv]` | Open the current page untruncated in a scratch window |
 | `:Dblite export <csv\|json> [path]` | Write the **entire** result set to a file |
+| `:Dblite run bulk <csv\|json> [path]` | Run the current query **in the background**, streaming the full result straight to a file |
+| `:Dblite jobs` | Toggle the background-jobs panel |
 | `:Dblite load` | Load a CSV into a table from a `LOAD DATA` control block (preview, then commit) |
 
 Trailing semicolons are stripped automatically. The legacy `:DbliteRun`, `:DbliteRunAt`, and `:DbliteToggleOut` commands remain as aliases. Running from a different tab moves the dbout split to that tab.
@@ -211,6 +214,35 @@ The binds window is a vertical split by default; set `binds_split.style = 'float
 ```
 
 `~`, env vars, and relative paths are expanded, and missing parent directories are created. CSV is RFC-4180 escaped; JSON is pretty-printed via `jq` when available (compact fallback otherwise).
+
+`export` works off the result set already loaded in dbout, so it's capped by `max_rows`. To dump **more rows than `max_rows`** — or to keep working while a huge query runs — use a **bulk background export** instead (below).
+
+</details>
+
+<details>
+<summary><b>Bulk background exports</b></summary>
+
+`:Dblite run bulk csv|json [path]` (or `:DbliteRunBulk`) runs the query at the cursor (or the whole buffer) **asynchronously**, streaming the full result set straight to a file via the native binary — no `max_rows` cap and no in-editor buffering, so it handles arbitrarily large pulls (e.g. 50k+ rows) without blocking your session:
+
+```
+:Dblite run bulk csv ~/exports/big.csv
+:Dblite run bulk json ./out/big.json
+:DbliteRunBulk csv                      " omit the path to be prompted (with completion)
+```
+
+Jobs run in the background, so you can keep running normal queries meanwhile. `:Dblite jobs` (or `:DbliteJobs`) toggles a **jobs panel** showing each background export with a live spinner + elapsed seconds while running, then `✓` and the final row count when done (or `✗` with the error). Finished jobs auto-clear after `jobs.cleanup_delay` seconds (default 300).
+
+**Jobs panel keymaps:**
+
+| Key | Action |
+|---|---|
+| `<CR>` | Open the output file of the job under the cursor in a new tab |
+| `x` | Cancel a running job / dismiss a finished one |
+| `q` | Close the panel |
+
+There is **no client-side query timeout**, so a bulk export runs until the database returns — fine for multi-minute queries. Bind parameters are resolved the same way as normal queries.
+
+> **Note:** bulk export needs a native binary that includes `--to-file` support. If you installed a pre-built release binary, force a source rebuild with `:DbliteBuild!` (or `:Dblite build force`) to pick it up — plain `:DbliteBuild` downloads the latest *release*, which may not include it yet.
 
 </details>
 
@@ -404,6 +436,12 @@ require('dblite').setup({
   panel = {
     width = 30,                   -- side panel width in columns
   },
+  jobs = {                        -- background bulk-export jobs (:Dblite run bulk)
+    panel = { width = 46 },       -- jobs-panel width in columns
+    cleanup_delay  = 300,         -- seconds a finished job lingers before auto-removal; 0 = keep until dismissed
+    default_format = 'csv',       -- default bulk format: 'csv' | 'json'
+    open_on_start  = true,        -- auto-open the jobs panel when a bulk export starts
+  },
   connection_picker = 'panel',    -- 'panel' | 'telescope' (requires telescope.nvim)
   telescope_picker = {
     preview       = true,         -- show the connection-details preview (password masked)
@@ -443,6 +481,7 @@ require('dblite').setup({
       fullscreen = '<leader>l',   -- toggle dbout fullscreen
     },
     panel = { select = '<CR>', edit = 'cw', close = 'q' },
+    jobs  = { open = '<CR>', cancel = 'x', close = 'q' },  -- background-jobs panel
     load  = { commit = '<CR>', cancel = 'q' },  -- CSV-load preview buffer
   },
 })

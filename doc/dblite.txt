@@ -166,6 +166,30 @@ window was open in another tab it is closed there first.
 `max_rows` caps the number of rows returned (default 10000). Results are
 paginated in the dbout buffer at `page_size` rows per page (default 100).
 
+Bulk background exports ~				*dblite-bulk*
+
+`:Dblite run bulk csv|json [path]` (or |:DbliteRunBulk|) runs the query at the
+cursor (or the whole buffer) asynchronously, streaming the full result set
+straight to a file via the native binary. It ignores `max_rows` and never
+buffers the result in the editor, so it handles arbitrarily large exports
+(e.g. 50k+ rows) without blocking the session — you can keep running normal
+queries while it churns. There is no client-side query timeout, so a bulk
+export runs until the database returns.
+
+`:Dblite jobs` (or |:DbliteJobs|) toggles the jobs panel, which lists each
+background export with a live spinner + elapsed seconds while running, then a
+`✓` and the final row count when done (or `✗` with the error). Finished jobs
+auto-clear after `jobs.cleanup_delay` seconds (default 300; 0 = keep until
+dismissed). In the panel: `<CR>` opens a finished job's output file in a new
+tab, `x` cancels a running job (or dismisses a finished one), `q` closes it.
+Keys are configurable via `keymaps.jobs`; panel width and behaviour via the
+`jobs` config table.
+
+Note: bulk export requires a native binary that includes `--to-file` support.
+If you installed a pre-built release binary, force a source rebuild with
+|:DbliteBuild|! (`:DbliteBuild!` or `:Dblite build force`) to pick it up —
+plain |:DbliteBuild| downloads the latest release, which may not include it yet.
+
 Loading CSV data ~					*dblite-load*
 
 Write a SQL*Loader-style control block in a buffer and run |:DbliteLoad| (or
@@ -359,8 +383,13 @@ Unified entry point ~
 							*:Dblite*
 :Dblite run			Run the entire buffer as a query.
 :Dblite run at			Run the statement under the cursor.
+:Dblite run bulk <fmt> [path]	Run the current query in the background,
+				streaming the full result to a file. See
+				|dblite-bulk|.
+:Dblite jobs			Toggle the background-jobs panel.
 :Dblite toggle panel		Toggle the connections panel.
 :Dblite toggle dbout		Toggle the result window.
+:Dblite toggle jobs		Toggle the background-jobs panel.
 :Dblite conn add [uri]		Add a connection.
 :Dblite conn list		List connections.
 :Dblite conn use <name>		Set the active connection.
@@ -368,6 +397,7 @@ Unified entry point ~
 :Dblite conn del <name>		Delete a connection.
 :Dblite conn file		Open the raw connections JSON.
 :Dblite build			Download or build the native binary.
+:Dblite build force		Skip the download and build from source.
 :Dblite inspect [fmt]		Inspect current page (json|table|csv).
 :Dblite binds			Toggle the dblite.binds.json window.
 :Dblite load			Load a CSV via a LOAD DATA control block
@@ -382,6 +412,12 @@ Individual commands ~
 :DbliteRunAt			Run the statement under the cursor.
 							*:DbliteToggleOut*
 :DbliteToggleOut		Toggle the result (dbout) window.
+							*:DbliteRunBulk*
+:DbliteRunBulk <fmt> [path]	Run the current query as a background bulk
+				export (csv|json). Prompts for a path when
+				omitted. See |dblite-bulk|.
+							*:DbliteJobs*
+:DbliteJobs			Toggle the background-jobs panel.
 							*:DblitePanel*
 :DblitePanel			Toggle the connections panel.
 							*:DbliteAddConn*
@@ -399,6 +435,10 @@ Individual commands ~
 							*:DbliteBuild*
 :DbliteBuild			Download a pre-built binary, or build from
 				source if none matches your platform.
+:DbliteBuild!			Skip the download and always build from
+				source (use when the local source is ahead
+				of the latest release, e.g. after changing
+				the Java).
 							*:DbliteLoad*
 :DbliteLoad			Load a CSV into a table from a SQL*Loader-style
 				LOAD DATA control block in the current buffer,
