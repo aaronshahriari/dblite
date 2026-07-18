@@ -166,6 +166,36 @@ window was open in another tab it is closed there first.
 `max_rows` caps the number of rows returned (default 10000). Results are
 paginated in the dbout buffer at `page_size` rows per page (default 100).
 
+Loading CSV data ~					*dblite-load*
+
+Write a SQL*Loader-style control block in a buffer and run |:DbliteLoad| (or
+`:Dblite load`). dblite parses the block, reads the CSV, and opens a preview
+of the generated INSERTs; nothing runs until you commit it: >
+
+	LOAD DATA
+	INFILE 'employees.csv'
+	INTO TABLE employees
+	SKIP 1
+	FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
+	TRAILING NULLCOLS
+	( employee_id, name, department )
+<
+In the preview buffer press `<CR>` to commit (run the INSERTs through script
+mode; results appear as a per-row OK/ERROR log in the dbout) or `q` to cancel.
+The preview is editable SQL, so you can tweak it before committing. Keys are
+configurable via `keymaps.load`; the window style via `load_view`.
+
+This is an emulation, not real sqlldr (the binary has no Oracle client): a
+practical subset of the control syntax is turned into INSERTs. Supported:
+`INFILE 'path'` (relative to cwd, ~/$ENV expanded), `INTO TABLE name` with an
+optional `APPEND` (default) / `REPLACE` (DELETE first) / `TRUNCATE` mode,
+`SKIP n`, `FIELDS TERMINATED BY 'c'` (also `X'09'` hex, e.g. tab), `(OPTIONALLY)
+ENCLOSED BY 'c'` (default `"`), `TRAILING NULLCOLS`, and a `(col, ...)` list.
+Values are typed best-effort: numbers unquoted, empty fields become NULL,
+everything else is quoted. Dates rely on Oracle's implicit NLS conversion.
+Not supported: per-column datatypes/transforms, positional fields, direct
+path, and inline `BEGINDATA` (`INFILE *`).
+
 ==============================================================================
 8. RESULT BUFFER (dbout)				*dblite-dbout*
 
@@ -340,6 +370,8 @@ Unified entry point ~
 :Dblite build			Download or build the native binary.
 :Dblite inspect [fmt]		Inspect current page (json|table|csv).
 :Dblite binds			Toggle the dblite.binds.json window.
+:Dblite load			Load a CSV via a LOAD DATA control block
+				(preview, then commit). See |dblite-load|.
 
 All subcommands and connection names support <Tab> completion.
 
@@ -367,6 +399,11 @@ Individual commands ~
 							*:DbliteBuild*
 :DbliteBuild			Download a pre-built binary, or build from
 				source if none matches your platform.
+							*:DbliteLoad*
+:DbliteLoad			Load a CSV into a table from a SQL*Loader-style
+				LOAD DATA control block in the current buffer,
+				previewing the INSERTs before you commit them.
+				Accepts a range. See |dblite-load|.
 
 The unified :Dblite forms and these individual commands are equivalent;
 :DbliteRun, :DbliteRunAt, and :DbliteToggleOut are kept as aliases.

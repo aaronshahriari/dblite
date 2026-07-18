@@ -3,6 +3,7 @@ local connections  = require("dblite.connections")
 local panel        = require("dblite.panel")
 local telescope    = require("dblite.telescope")
 local query_module = require("dblite.query")
+local load_mod     = require("dblite.load")
 
 local M = {}
 
@@ -1398,6 +1399,125 @@ function M.export(format, path)
     #state.rows, #state.rows == 1 and "" or "s", path), vim.log.levels.INFO)
 end
 
+-- Open a scratch buffer previewing the INSERTs a CSV load will run. The buffer
+-- is editable SQL: on commit we run whatever it currently holds (minus the
+-- comment header) through script mode, so the user can tweak before committing.
+local function open_load_preview(control, built, path)
+  local km = (config.keymaps and config.keymaps.load) or {}
+  local commit_key = km.commit or "<CR>"
+  local cancel_key = km.cancel or "q"
+
+  local lines = {}
+  local function h(s) lines[#lines + 1] = "-- " .. s end
+  h(string.format("dblite load — %s to commit, %s to cancel", commit_key, cancel_key))
+  h("source : " .. path)
+  h(string.format("target : %s   (mode=%s)", control.table, control.mode))
+  h("columns: " .. table.concat(control.columns, ", "))
+  local extra = built.skipped > 0 and string.format("  (skipped %d header row(s))", built.skipped) or ""
+  h(string.format("rows   : %d insert(s)%s", built.count, extra))
+  if #built.errors > 0 then
+    h(string.format("errors : %d row(s) not inserted —", #built.errors))
+    for _, e in ipairs(built.errors) do h("  " .. e) end
+  end
+  lines[#lines + 1] = ""
+  vim.list_extend(lines, built.statements)
+
+  local view = config.load_view or "tab"
+  local bufnr, winnr
+  if view == "float" then
+    local width  = math.floor(vim.o.columns * 0.85)
+    local height = math.floor(vim.o.lines * 0.80)
+    bufnr = vim.api.nvim_create_buf(false, true)
+    winnr = vim.api.nvim_open_win(bufnr, true, {
+      relative = "editor", style = "minimal", border = "rounded",
+      width = width, height = height,
+      row = math.floor((vim.o.lines - height) / 2),
+      col = math.floor((vim.o.columns - width) / 2),
+    })
+  else
+    local cmds = { tab = "tabnew", vertical = "botright vnew", horizontal = "botright new" }
+    vim.cmd(cmds[view] or "tabnew")
+    bufnr = vim.api.nvim_get_current_buf()
+    winnr = vim.api.nvim_get_current_win()
+  end
+
+  vim.bo[bufnr].buftype   = "nofile"
+  vim.bo[bufnr].bufhidden = "wipe"
+  vim.bo[bufnr].swapfile  = false
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.bo[bufnr].filetype  = "sql"
+
+  local function close()
+    if winnr and vim.api.nvim_win_is_valid(winnr) then
+      pcall(vim.api.nvim_win_close, winnr, true)
+    end
+  end
+
+  vim.keymap.set("n", cancel_key, close, { buffer = bufnr, silent = true, desc = "dblite: cancel load" })
+  vim.keymap.set("n", commit_key, function()
+    -- Run the buffer as it stands, dropping pure-comment lines from the header.
+    local kept = {}
+    for _, ln in ipairs(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)) do
+      if not ln:match("^%s*%-%-") then kept[#kept + 1] = ln end
+    end
+    local sql = table.concat(kept, "\n")
+    close()
+    if sql:match("%S") then execute_core(sql, true) end
+  end, { buffer = bufnr, silent = true, desc = "dblite: commit load" })
+end
+
+-- :Dblite load — parse a SQL*Loader control block in the buffer, read its CSV,
+-- and preview the generated INSERTs before committing them (script mode).
+function M.load(opts)
+  local first, last
+  if opts and opts.range and opts.range > 0 then
+    first, last = opts.line1, opts.line2
+  else
+    first, last = 1, vim.api.nvim_buf_line_count(0)
+  end
+  local text = table.concat(vim.api.nvim_buf_get_lines(0, first - 1, last, false), "\n")
+
+  local control, perr = load_mod.parse(text)
+  if not control then
+    vim.notify("dblite: " .. perr, vim.log.levels.ERROR)
+    return
+  end
+
+  if vim.fn.executable(config.binary) ~= 1 then
+    vim.notify("dblite: binary not found — run :DbliteBuild", vim.log.levels.ERROR)
+    return
+  end
+  if not state.active_conn then
+    vim.notify("dblite: no active connection — use :DbliteUseConn <name>", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Resolve INFILE relative to cwd, expanding ~ and $ENV_VAR (as export does).
+  local path = vim.fn.fnamemodify(vim.fn.expand(expand_env(control.infile)), ":p")
+  if vim.fn.filereadable(path) ~= 1 then
+    vim.notify("dblite: INFILE not readable: " .. path, vim.log.levels.ERROR)
+    return
+  end
+
+  local records, rerr = load_mod.read_csv(path, control.sep, control.enclosed)
+  if not records then
+    vim.notify("dblite: " .. rerr, vim.log.levels.ERROR)
+    return
+  end
+
+  local built = load_mod.build(control, records)
+  if built.count == 0 then
+    local msg = "dblite: nothing to load from " .. path
+    if #built.errors > 0 then msg = msg .. " — " .. built.errors[1] end
+    vim.notify(msg, vim.log.levels.WARN)
+    return
+  end
+
+  open_load_preview(control, built, path)
+end
+
+vim.api.nvim_create_user_command("DbliteLoad", M.load, { range = true })
+
 local _binds_win = nil
 
 local function ensure_binds_file()
@@ -1536,6 +1656,7 @@ do
       M.export(a[2], path)
     end,
     binds         = function() M.edit_binds() end,
+    load          = function() M.load() end,
   }
 
   local function complete(arg_lead, cmd_line)
@@ -1543,7 +1664,7 @@ do
     local n = #tokens
     if n == 2 then
       return vim.tbl_filter(function(k) return k:sub(1, #arg_lead) == arg_lead end,
-        { "run", "toggle", "conn", "build", "inspect", "export", "binds" })
+        { "run", "toggle", "conn", "build", "inspect", "export", "binds", "load" })
     elseif n == 3 then
       local sub = tokens[2]
       local opts = {

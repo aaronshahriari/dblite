@@ -47,6 +47,7 @@ local M = {
   },
   flash_timeout  = 2000,  -- ms to hold the query highlight before auto-clearing (0 = wait for results)
   json_view      = "tab",  -- where to open the inspector: "tab" | "vertical" | "horizontal" | "float"
+  load_view      = "tab",  -- where to open the CSV-load preview: "tab" | "vertical" | "horizontal" | "float"
   inspect_format = "json", -- default inspect format: "json" | "table" | "csv"
   inspect_expand_json = true, -- in json inspect, decode cell values that are themselves JSON strings so they nest cleanly
   style = {
@@ -83,6 +84,10 @@ local M = {
       select = "<CR>", -- activate connection under cursor
       edit   = "cw",   -- edit connection under cursor
       close  = "q",    -- close panel
+    },
+    load = {     -- keymaps active inside the CSV-load preview buffer
+      commit = "<CR>", -- run the generated INSERTs
+      cancel = "q",    -- discard the preview without running
     },
   },
 }
