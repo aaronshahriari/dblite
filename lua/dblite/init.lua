@@ -100,6 +100,7 @@ local installed_global_keymaps = {}
 local function apply_global_keymaps()
   for _, lhs in pairs(installed_global_keymaps) do
     pcall(vim.keymap.del, "n", lhs)
+    pcall(vim.keymap.del, "x", lhs)  -- run_bulk also installs a visual mapping
   end
   installed_global_keymaps = {}
 
@@ -108,6 +109,10 @@ local function apply_global_keymaps()
     local lhs = gk[a.key]
     if lhs and lhs ~= "" then
       vim.keymap.set("n", lhs, a.fn, { silent = true, desc = "dblite: " .. a.desc })
+      if a.key == "run_bulk" then
+        vim.keymap.set("x", lhs, M.run_bulk_visual,
+          { silent = true, desc = "dblite: bulk export selection" })
+      end
       installed_global_keymaps[a.key] = lhs
     end
   end
@@ -122,6 +127,11 @@ function M.attach(buf)
     if lhs and lhs ~= "" then
       vim.keymap.set("n", lhs, a.fn,
         { buffer = buf, silent = true, desc = "dblite: " .. a.desc })
+      -- run_bulk also works on a visual selection (dumps the touched statements)
+      if a.key == "run_bulk" then
+        vim.keymap.set("x", lhs, M.run_bulk_visual,
+          { buffer = buf, silent = true, desc = "dblite: bulk export selection" })
+      end
     end
   end
   if type(config.on_attach) == "function" then
@@ -715,7 +725,23 @@ local function render_script_log(parsed, elapsed)
   vim.bo[state.result_bufnr].modifiable = false
 end
 
+-- Commands executed from the command-line window (q:/q/) run while it is still
+-- open, where any window-layout change or window switch raises E11. Our run and
+-- export paths open splits (the dbout result window, the binds file), so when
+-- we're in the cmdwin we defer the whole operation until the user leaves it.
+-- Returns true if it deferred (the caller should return immediately).
+local function defer_if_in_cmdwin(fn)
+  if vim.fn.getcmdwintype() == "" then return false end
+  vim.api.nvim_create_autocmd("CmdwinLeave", {
+    once     = true,
+    callback = function() vim.schedule(fn) end,
+  })
+  return true
+end
+
 local function execute_core(query, script)
+  if defer_if_in_cmdwin(function() execute_core(query, script) end) then return end
+
   if vim.fn.executable(config.binary) ~= 1 then
     local hint = _plugin_root
       and "run :DbliteBuild to compile the native binary"
@@ -911,7 +937,9 @@ end
 -- background bulk export: the native binary streams the full result set
 -- straight to `path` (no --max-rows cap, no in-editor buffering) while the
 -- user keeps working. Progress shows in the jobs panel (:DbliteJobs).
-function M.run_async(format, path)
+function M.run_async(format, path, range)
+  if defer_if_in_cmdwin(function() M.run_async(format, path, range) end) then return end
+
   format = (format or (config.jobs and config.jobs.default_format) or "csv"):lower()
   if format ~= "csv" and format ~= "json" then
     vim.notify("dblite: bulk format must be 'csv' or 'json'", vim.log.levels.ERROR)
@@ -932,14 +960,24 @@ function M.run_async(format, path)
   end
 
   local bufnr = vim.api.nvim_get_current_buf()
-  local sr, sc, er, ec, query = query_module.at_cursor(bufnr)
-  if not query or query:match("^%s*$") then
-    query = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
-    sr = nil
-  end
-  if query:match("^%s*$") then
-    vim.notify("dblite: nothing to run", vim.log.levels.WARN)
-    return
+  local sr, sc, er, ec, query
+  if range then
+    -- Visual/range invocation: dump exactly the statement(s) the selection touches.
+    sr, sc, er, ec, query = query_module.at_range(bufnr, range.line1, range.line2)
+    if not query or query:match("^%s*$") then
+      vim.notify("dblite: nothing to run in selection", vim.log.levels.WARN)
+      return
+    end
+  else
+    sr, sc, er, ec, query = query_module.at_cursor(bufnr)
+    if not query or query:match("^%s*$") then
+      query = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
+      sr = nil
+    end
+    if query:match("^%s*$") then
+      vim.notify("dblite: nothing to run", vim.log.levels.WARN)
+      return
+    end
   end
 
   -- Resolve binds before we prompt for a path, so missing binds fail fast.
@@ -1031,6 +1069,15 @@ function M.run_async(format, path)
   vim.notify("dblite: bulk export started → " .. path, vim.log.levels.INFO)
 end
 
+-- Bulk-export the current visual selection (bound to the `run_bulk` key in
+-- visual mode). Reads the selected line range, leaves visual mode, then dumps
+-- the statement(s) it touches at the configured default format.
+function M.run_bulk_visual()
+  local a, b = vim.fn.line("v"), vim.fn.line(".")
+  vim.cmd("normal! \27")  -- <Esc>: exit visual mode before any prompt/split
+  M.run_async(nil, nil, { line1 = math.min(a, b), line2 = math.max(a, b) })
+end
+
 -- Jobs panel public API
 M.toggle_jobs = jobs.toggle
 M.open_jobs   = jobs.open
@@ -1041,13 +1088,16 @@ vim.api.nvim_create_user_command("DbliteRun",   M.execute,           {})
 vim.api.nvim_create_user_command("DbliteRunAt", M.execute_at_cursor, {})
 vim.api.nvim_create_user_command("DbliteRunScript", M.execute_script, { range = true })
 
--- :DbliteRunBulk <csv|json> [path] — run the current query as a background dump
+-- :DbliteRunBulk <csv|json> [path] — run the current query as a background dump.
+-- With a range (e.g. :'<,'>DbliteRunBulk csv) it dumps the selected statement(s).
 vim.api.nvim_create_user_command("DbliteRunBulk", function(opts)
   local fmt  = opts.fargs[1]
   local path = opts.fargs[2] and table.concat(vim.list_slice(opts.fargs, 2), " ") or nil
-  M.run_async(fmt, path)
+  local range = (opts.range and opts.range > 0) and { line1 = opts.line1, line2 = opts.line2 } or nil
+  M.run_async(fmt, path, range)
 end, {
   nargs = "*",
+  range = true,
   complete = function(arg_lead, cmd_line)
     local n = #vim.split(cmd_line, "%s+")
     if n <= 2 then
@@ -1760,16 +1810,9 @@ end
 local function open_binds_split()
   -- Opening a window is illegal while the command-line window (q:/q/) is open:
   -- the split branch changes the window layout and the float branch switches
-  -- into a new window, both of which raise E11. This is reachable from commands
-  -- run out of the cmdwin (e.g. :DbliteRun landing on a missing bind), so if
-  -- we're in it, wait for the user to leave and then open the binds file.
-  if vim.fn.getcmdwintype() ~= "" then
-    vim.api.nvim_create_autocmd("CmdwinLeave", {
-      once     = true,
-      callback = function() vim.schedule(open_binds_split) end,
-    })
-    return
-  end
+  -- into a new window, both of which raise E11. This is reachable directly from
+  -- the cmdwin (e.g. :Dblite binds), so defer until the user leaves it.
+  if defer_if_in_cmdwin(open_binds_split) then return end
 
   local path = ensure_binds_file()
   local split_cfg = config.binds_split or {}
@@ -1871,12 +1914,12 @@ end
 -- Unified :Dblite <subcommand> entry point
 do
   local dispatch = {
-    run           = function(a)
+    run           = function(a, range)
       if     a[2] == "at"     then M.execute_at_cursor()
       elseif a[2] == "script" then M.execute_script()
       elseif a[2] == "bulk"   then
         local path = #a >= 4 and table.concat(vim.list_slice(a, 4), " ") or nil
-        M.run_async(a[3], path)
+        M.run_async(a[3], path, range)
       else M.execute() end
     end,
     jobs          = function() jobs.toggle() end,
@@ -1940,14 +1983,16 @@ do
 
   vim.api.nvim_create_user_command("Dblite", function(opts)
     local args = vim.split(opts.args, "%s+")
+    local range = (opts.range and opts.range > 0) and { line1 = opts.line1, line2 = opts.line2 } or nil
     local fn = dispatch[args[1]]
     if fn then
-      fn(args)
+      fn(args, range)
     else
       vim.notify("dblite: unknown subcommand '" .. (args[1] or "") .. "'", vim.log.levels.ERROR)
     end
   end, {
     nargs    = "+",
+    range    = true,
     complete = complete,
   })
 end

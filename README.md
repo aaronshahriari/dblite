@@ -228,7 +228,10 @@ The binds window is a vertical split by default; set `binds_split.style = 'float
 :Dblite run bulk csv ~/exports/big.csv
 :Dblite run bulk json ./out/big.json
 :DbliteRunBulk csv                      " omit the path to be prompted (with completion)
+:'<,'>DbliteRunBulk csv                 " export just the selected statement(s)
 ```
+
+Both commands accept a range, so you can visually select some SQL and dump exactly that — the selection is expanded to the whole statement(s) it touches. The `run_bulk` keymap also fires from visual mode.
 
 Jobs run in the background, so you can keep running normal queries meanwhile. `:Dblite jobs` (or `:DbliteJobs`) toggles a floating **jobs panel** showing status, output file name, duration, and exported row count.
 

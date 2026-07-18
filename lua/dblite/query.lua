@@ -54,6 +54,39 @@ local function fallback(bufnr)
   return start_row, 0, end_row, end_col, table.concat(text_lines, "\n")
 end
 
+-- Expand a line range (1-indexed, inclusive) to cover the whole statement(s)
+-- it touches, using the same blank-line / semicolon separators as the
+-- at-cursor fallback: the top edge grows up to the start of the first statement
+-- and the bottom edge grows down to the end of the last one. Returns sr, sc, er,
+-- ec (0-indexed) and the concatenated text, or nil if the span is blank.
+function M.at_range(bufnr, line1, line2)
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local n     = #lines
+  if n == 0 then return nil end
+
+  local function blank(row)    return (lines[row + 1] or ""):match("^%s*$") ~= nil end
+  local function has_semi(row) return (lines[row + 1] or ""):match(";%s*$") ~= nil end
+
+  local start_row = math.max(0,     math.min(line1, line2) - 1)  -- 0-indexed
+  local end_row   = math.min(n - 1, math.max(line1, line2) - 1)
+
+  while start_row > 0 and not blank(start_row - 1) and not has_semi(start_row - 1) do
+    start_row = start_row - 1
+  end
+  while end_row < n - 1 and not has_semi(end_row) and not blank(end_row + 1) do
+    end_row = end_row + 1
+  end
+
+  local text_lines = {}
+  for i = start_row + 1, end_row + 1 do
+    table.insert(text_lines, lines[i] or "")
+  end
+  local text = table.concat(text_lines, "\n")
+  if text:match("^%s*$") then return nil end
+  local end_col = #(lines[end_row + 1] or "")
+  return start_row, 0, end_row, end_col, text
+end
+
 -- Returns sr, sc, er, ec (0-indexed), query_text for the statement at cursor.
 -- Returns nil if the cursor is on a blank line.
 function M.at_cursor(bufnr)

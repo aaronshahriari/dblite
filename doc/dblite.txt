@@ -170,7 +170,10 @@ Bulk background exports ~				*dblite-bulk*
 
 `:Dblite run bulk csv|json [path]` (or |:DbliteRunBulk|) runs the query at the
 cursor (or the whole buffer) asynchronously, streaming the full result set
-straight to a file via the native binary. It ignores `max_rows` and never
+straight to a file via the native binary. Both forms accept a range, so
+`:'<,'>DbliteRunBulk csv` exports only the selected statement(s) (the selection
+is expanded to the whole statement it touches); the `run_bulk` keymap also
+fires from visual mode. It ignores `max_rows` and never
 buffers the result in the editor, so it handles arbitrarily large exports
 (e.g. 50k+ rows) without blocking the session — you can keep running normal
 queries while it churns. There is no client-side query timeout, so a bulk
@@ -423,7 +426,9 @@ Individual commands ~
 							*:DbliteRunBulk*
 :DbliteRunBulk <fmt> [path]	Run the current query as a background bulk
 				export (csv|json). Prompts for a path when
-				omitted. See |dblite-bulk|.
+				omitted. Accepts a range (:'<,'>DbliteRunBulk)
+				to export the selected statement(s).
+				See |dblite-bulk|.
 							*:DbliteJobs*
 :DbliteJobs			Toggle the background-jobs panel.
 							*:DblitePanel*
@@ -658,8 +663,10 @@ All functionality is available programmatically: >lua
 	db.execute()               -- run the current buffer as a query
 	db.execute_at_cursor()     -- run the statement under the cursor
 	db.execute_script()        -- run the buffer as a SQL*Plus script
-	db.run_async(fmt, path)    -- background bulk export ('csv'|'json');
-	                           --   both args optional (prompts if omitted)
+	db.run_async(fmt, path, range) -- background bulk export ('csv'|'json');
+	                           --   fmt/path optional (prompts if omitted);
+	                           --   range = {line1=,line2=} exports a selection
+	db.run_bulk_visual()       -- bulk-export the current visual selection
 	db.toggle_dbout()          -- show/hide the result window
 	db.toggle_fullscreen()     -- toggle dbout fullscreen tab
 	db.inspect(format)         -- 'json' | 'table' | 'csv'
