@@ -13,6 +13,7 @@ local ns = vim.api.nvim_create_namespace("dblite_jobs_panel")
 
 vim.api.nvim_set_hl(0, "DbliteJobsTitle",     { link = "Title",           default = true })
 vim.api.nvim_set_hl(0, "DbliteJobsSep",       { link = "Comment",         default = true })
+vim.api.nvim_set_hl(0, "DbliteJobsSection",   { link = "Type",            default = true })
 vim.api.nvim_set_hl(0, "DbliteJobsRunning",   { link = "Function",        default = true })
 vim.api.nvim_set_hl(0, "DbliteJobsDone",      { link = "String",          default = true })
 vim.api.nvim_set_hl(0, "DbliteJobsError",     { link = "DiagnosticError", default = true })
@@ -227,25 +228,98 @@ local function confirm(prompt)
   return vim.fn.confirm(prompt, "&Yes\n&No", 2) == 1
 end
 
--- The panel's display list: this instance's live jobs (running + pending
--- cleanup) first, then persisted history (excluding ids already shown live),
--- newest-first, capped at history.show.
-local function display_jobs()
-  local out, seen = {}, {}
+local function id_counter(id)
+  return tonumber(tostring(id or ""):match("%-(%d+)$")) or 0
+end
+
+local function newer_running_first(a, b)
+  local ast, bst = a.started_at or 0, b.started_at or 0
+  if ast ~= bst then return ast > bst end
+  local am, bm = a.start or 0, b.start or 0
+  if am ~= bm then return am > bm end
+  return id_counter(a.id) > id_counter(b.id)
+end
+
+local function newer_history_first(a, b)
+  local aft, bft = a.finished_at or 0, b.finished_at or 0
+  if aft ~= bft then return aft > bft end
+  local ast, bst = a.started_at or 0, b.started_at or 0
+  if ast ~= bst then return ast > bst end
+  return id_counter(a.id) > id_counter(b.id)
+end
+
+-- Running jobs and terminal history are rendered separately. Terminal live jobs
+-- are included in history until cleanup removes the live copy, so recently
+-- finished jobs stay in the right chronological position.
+local function display_groups()
+  local running, history, seen_history = {}, {}, {}
+
   for _, j in ipairs(jobs) do
-    out[#out + 1] = j
-    seen[j.id] = true
-  end
-  local show = history_cfg().show or 20
-  local n = 0
-  for _, e in ipairs(history_cache) do
-    if not seen[e.id] then
-      out[#out + 1] = e
-      n = n + 1
-      if show > 0 and n >= show then break end
+    if j.status == "running" then
+      running[#running + 1] = j
+    else
+      history[#history + 1] = j
+      seen_history[j.id] = true
     end
   end
-  return out
+
+  local show = history_cfg().show or 20
+  for _, e in ipairs(history_cache) do
+    if not seen_history[e.id] then
+      history[#history + 1] = e
+    end
+  end
+
+  table.sort(running, newer_running_first)
+  table.sort(history, newer_history_first)
+  if show > 0 and #history > show then
+    for i = #history, show + 1, -1 do table.remove(history, i) end
+  end
+
+  return running, history
+end
+
+local function append_section(lines, hls, title)
+  if #lines > 2 then table.insert(lines, "") end
+  table.insert(lines, "  " .. title)
+  table.insert(hls, { row = #lines - 1, col = 2, ecol = #lines[#lines], group = "DbliteJobsSection" })
+end
+
+local function append_job(lines, line_map, hls, width, j)
+  local icon, status_hl, meta
+  if j.status == "running" then
+    icon      = ICON.running
+    status_hl = "DbliteJobsRunning"
+    meta      = format_duration(j) .. " · " .. format_rows(j.rows)
+  else
+    if j.status == "done" then
+      icon      = ICON.done
+      status_hl = "DbliteJobsDone"
+    elseif j.status == "error" then
+      icon      = ICON.error
+      status_hl = "DbliteJobsError"
+    else -- cancelled
+      icon      = ICON.cancelled
+      status_hl = "DbliteJobsCancelled"
+    end
+    meta = format_duration(j) .. " · " .. format_rows(j.rows)
+  end
+
+  local prefix  = "  "
+  local mid     = "  "
+  local label_width = math.max(8, width - 8 - vim.fn.strdisplaywidth(meta))
+  local labelf  = trunc(file_name(j), label_width)
+  local pad     = string.rep(" ", math.max(1, label_width + 1 - vim.fn.strdisplaywidth(labelf)))
+  local line    = prefix .. icon .. mid .. labelf .. pad .. meta
+
+  table.insert(lines, line)
+  local row = #lines - 1
+  line_map[#lines] = j.id
+
+  local icon_col = #prefix
+  local meta_col = #prefix + #icon + #mid + #labelf + #pad
+  table.insert(hls, { row = row, col = icon_col, ecol = icon_col + #icon, group = status_hl })
+  table.insert(hls, { row = row, col = meta_col, ecol = meta_col + #meta, group = "DbliteJobsMeta" })
 end
 
 local function build_lines()
@@ -259,50 +333,21 @@ local function build_lines()
     { row = 1, col = 0, ecol = #lines[2], group = "DbliteJobsSep"   },
   }
 
-  local entries = display_jobs()
-  if #entries == 0 then
+  local running, history = display_groups()
+  if #running == 0 and #history == 0 then
     table.insert(lines, "  (no background jobs)")
     table.insert(hls, { row = 2, col = 0, ecol = #lines[3], group = "DbliteJobsMeta" })
     return lines, line_map, hls
   end
 
-  for _, j in ipairs(entries) do
-    local icon, status_hl, meta
-    if j.status == "running" then
-      icon      = ICON.running
-      status_hl = "DbliteJobsRunning"
-      meta      = format_duration(j) .. " · " .. format_rows(j.rows)
-    else
-      if j.status == "done" then
-        icon      = ICON.done
-        status_hl = "DbliteJobsDone"
-        meta      = format_duration(j) .. " · " .. format_rows(j.rows)
-      elseif j.status == "error" then
-        icon      = ICON.error
-        status_hl = "DbliteJobsError"
-        meta      = format_duration(j) .. " · " .. format_rows(j.rows)
-      else -- cancelled
-        icon      = ICON.cancelled
-        status_hl = "DbliteJobsCancelled"
-        meta      = format_duration(j) .. " · " .. format_rows(j.rows)
-      end
-    end
+  if #running > 0 then
+    append_section(lines, hls, "Running")
+    for _, j in ipairs(running) do append_job(lines, line_map, hls, width, j) end
+  end
 
-    local prefix  = "  "
-    local mid     = "  "
-    local label_width = math.max(8, width - 8 - vim.fn.strdisplaywidth(meta))
-    local labelf  = trunc(file_name(j), label_width)
-    local pad     = string.rep(" ", math.max(1, label_width + 1 - vim.fn.strdisplaywidth(labelf)))
-    local line    = prefix .. icon .. mid .. labelf .. pad .. meta
-
-    table.insert(lines, line)
-    local row = #lines - 1
-    line_map[#lines] = j.id
-
-    local icon_col = #prefix
-    local meta_col = #prefix + #icon + #mid + #labelf + #pad
-    table.insert(hls, { row = row, col = icon_col, ecol = icon_col + #icon, group = status_hl })
-    table.insert(hls, { row = row, col = meta_col, ecol = meta_col + #meta, group = "DbliteJobsMeta" })
+  if #history > 0 then
+    append_section(lines, hls, "History")
+    for _, j in ipairs(history) do append_job(lines, line_map, hls, width, j) end
   end
 
   return lines, line_map, hls
