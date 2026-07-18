@@ -23,8 +23,16 @@ vim.api.nvim_set_hl(0, "DbliteJobsMeta",      { link = "Comment",         defaul
 local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 local ICON = { done = "✓", error = "✗", cancelled = "⊘" }
 
-local jobs    = {}   -- list of job records (see M.register)
-local next_id = 1
+local jobs = {}   -- live job records for THIS instance (running + pending cleanup)
+
+-- Globally-unique job id: time + pid + counter, so entries from concurrent
+-- Neovim instances never collide when merged into the shared history file.
+local pid         = vim.fn.getpid()
+local id_counter  = 0
+local function new_id()
+  id_counter = id_counter + 1
+  return string.format("%d-%d-%d", os.time(), pid, id_counter)
+end
 
 local state = {
   bufnr      = nil,
@@ -35,6 +43,83 @@ local state = {
   spin_idx   = 1,
 }
 
+-- --- Persistent history ---------------------------------------------------
+-- Terminal jobs (done/error/cancelled) are appended to a shared JSON file so
+-- history survives restarts and is visible across all Neovim instances. Only
+-- terminal jobs are persisted — running jobs live in the owning instance's
+-- memory, so a killed instance never leaves a stuck "running" ghost.
+
+local history_cache = {}  -- past terminal jobs, newest-first (in-memory mirror)
+
+local function history_cfg()
+  return (config.jobs and config.jobs.history) or {}
+end
+
+local function history_enabled()
+  return history_cfg().enabled ~= false  -- default on
+end
+
+local function history_path()
+  return history_cfg().file or (vim.fn.stdpath("data") .. "/dblite/jobs.json")
+end
+
+local function read_history_file()
+  local f = io.open(history_path(), "r")
+  if not f then return {} end
+  local raw = f:read("*a"); f:close()
+  local ok, data = pcall(vim.json.decode, raw or "")
+  return (ok and type(data) == "table" and vim.islist(data)) and data or {}
+end
+
+local function write_history_file(list)
+  local p = history_path()
+  vim.fn.mkdir(vim.fn.fnamemodify(p, ":h"), "p")
+  local tmp = p .. ".tmp." .. pid
+  local f = io.open(tmp, "wb")
+  if not f then return end
+  local ok = pcall(function() f:write(vim.json.encode(list)) end)
+  f:close()
+  if ok then os.rename(tmp, p) else os.remove(tmp) end
+end
+
+local function newest_first(list)
+  table.sort(list, function(a, b) return (a.finished_at or 0) > (b.finished_at or 0) end)
+  return list
+end
+
+-- The persisted shape of a job (runtime-only fields like handle/timers dropped).
+local function to_record(j)
+  return {
+    id        = j.id,        label     = j.label,   path    = j.path,
+    format    = j.format,    conn_name = j.conn_name, query = j.query,
+    status    = j.status,    started_at = j.started_at, finished_at = j.finished_at,
+    duration  = j.duration,  rows      = j.rows,    error   = j.error,
+  }
+end
+
+-- Read → merge this job by id → sort → trim to max_entries → atomic write.
+local function persist(j)
+  if not history_enabled() then return end
+  local list = read_history_file()
+  local replaced = false
+  for i, e in ipairs(list) do
+    if e.id == j.id then list[i] = to_record(j); replaced = true; break end
+  end
+  if not replaced then table.insert(list, to_record(j)) end
+  newest_first(list)
+  local cap = history_cfg().max_entries or 200
+  if cap > 0 and #list > cap then
+    for i = #list, cap + 1, -1 do table.remove(list, i) end
+  end
+  write_history_file(list)
+  history_cache = list
+end
+
+-- Refresh the in-memory mirror from disk (called on panel open + after writes).
+local function load_history()
+  history_cache = history_enabled() and newest_first(read_history_file()) or {}
+end
+
 -- --- Registry -------------------------------------------------------------
 
 local function job_by_id(id)
@@ -43,13 +128,22 @@ local function job_by_id(id)
   end
 end
 
+-- Find a displayed entry (live job or history record) by id.
+local function entry_by_id(id)
+  local j = job_by_id(id)
+  if j then return j end
+  for _, e in ipairs(history_cache) do
+    if e.id == id then return e end
+  end
+end
+
 -- Register a new running job. `rec` supplies: label, path, format, conn_name,
 -- query. Returns the job id used by set_handle / finish.
 function M.register(rec)
-  rec.id     = next_id
-  next_id    = next_id + 1
-  rec.status = "running"
-  rec.start  = vim.uv.now()
+  rec.id         = new_id()
+  rec.status     = "running"
+  rec.start      = vim.uv.now()  -- monotonic; live elapsed only (not persisted)
+  rec.started_at = os.time()     -- wall clock; persisted
   table.insert(jobs, rec)
   M.refresh()
   return rec.id
@@ -61,23 +155,25 @@ function M.set_handle(id, handle)
 end
 
 -- Mark a job finished (status = "done" | "error" | "cancelled") and merge any
--- extra fields (rows, error). Schedules auto-removal from the panel.
+-- extra fields (rows, error). Persists it to history and schedules removal of
+-- the live copy after cleanup_delay (it stays visible via history afterwards).
 function M.finish(id, fields)
   local j = job_by_id(id)
   if not j then return end
   for k, v in pairs(fields or {}) do j[k] = v end
-  j.finish  = vim.uv.now()
-  j.handle  = nil
+  j.finished_at = os.time()
+  j.duration    = j.start and (vim.uv.now() - j.start) / 1000 or 0
+  j.handle      = nil
+  persist(j)
   local delay = config.jobs and config.jobs.cleanup_delay or 300
   if delay and delay > 0 then
-    j.cleanup = vim.defer_fn(function()
-      M.remove(id)
-    end, delay * 1000)
+    j.cleanup = vim.defer_fn(function() M.remove(id) end, delay * 1000)
   end
   M.refresh()
 end
 
--- Remove a job from the registry (and cancel its pending cleanup timer).
+-- Remove a job from the live registry (and cancel its pending cleanup timer).
+-- Does not touch history — see M.forget.
 function M.remove(id)
   for i, j in ipairs(jobs) do
     if j.id == id then
@@ -86,6 +182,19 @@ function M.remove(id)
       break
     end
   end
+  M.refresh()
+end
+
+-- Permanently delete a job from the shared history file.
+function M.forget(id)
+  if not history_enabled() then return end
+  local list = read_history_file()
+  local changed = false
+  for i = #list, 1, -1 do
+    if list[i].id == id then table.remove(list, i); changed = true end
+  end
+  if changed then write_history_file(list) end
+  history_cache = newest_first(list)
   M.refresh()
 end
 
@@ -107,9 +216,35 @@ local function first_line(s)
   return (vim.split(tostring(s or ""), "\n", { plain = true })[1] or ""):gsub("%s+$", "")
 end
 
-local function elapsed_secs(j)
-  local finish = j.finish or vim.uv.now()
-  return (finish - j.start) / 1000
+local function relative_time(t)
+  if not t then return "" end
+  local d = os.time() - t
+  if d < 5     then return "just now" end
+  if d < 60    then return d .. "s ago" end
+  if d < 3600  then return math.floor(d / 60) .. "m ago" end
+  if d < 86400 then return math.floor(d / 3600) .. "h ago" end
+  return math.floor(d / 86400) .. "d ago"
+end
+
+-- The panel's display list: this instance's live jobs (running + pending
+-- cleanup) first, then persisted history (excluding ids already shown live),
+-- newest-first, capped at history.show.
+local function display_jobs()
+  local out, seen = {}, {}
+  for _, j in ipairs(jobs) do
+    out[#out + 1] = j
+    seen[j.id] = true
+  end
+  local show = history_cfg().show or 20
+  local n = 0
+  for _, e in ipairs(history_cache) do
+    if not seen[e.id] then
+      out[#out + 1] = e
+      n = n + 1
+      if show > 0 and n >= show then break end
+    end
+  end
+  return out
 end
 
 local function build_lines()
@@ -123,31 +258,36 @@ local function build_lines()
     { row = 1, col = 0, ecol = #lines[2], group = "DbliteJobsSep"   },
   }
 
-  if #jobs == 0 then
+  local entries = display_jobs()
+  if #entries == 0 then
     table.insert(lines, "  (no background jobs)")
     table.insert(hls, { row = 2, col = 0, ecol = #lines[3], group = "DbliteJobsMeta" })
     return lines, line_map, hls
   end
 
-  for _, j in ipairs(jobs) do
+  for _, j in ipairs(entries) do
     local icon, status_hl, meta
-    local secs = elapsed_secs(j)
     if j.status == "running" then
+      local secs = j.start and (vim.uv.now() - j.start) / 1000 or 0
       icon      = SPINNER[state.spin_idx]
       status_hl = "DbliteJobsRunning"
       meta      = string.format("%ds", math.floor(secs))
-    elseif j.status == "done" then
-      icon      = ICON.done
-      status_hl = "DbliteJobsDone"
-      meta      = string.format("%.1fs · %s rows", secs, j.rows ~= nil and tostring(j.rows) or "?")
-    elseif j.status == "error" then
-      icon      = ICON.error
-      status_hl = "DbliteJobsError"
-      meta      = string.format("%.1fs · %s", secs, first_line(j.error))
-    else -- cancelled
-      icon      = ICON.cancelled
-      status_hl = "DbliteJobsCancelled"
-      meta      = string.format("%.1fs · cancelled", secs)
+    else
+      local ago = relative_time(j.finished_at)
+      local dur = j.duration or 0
+      if j.status == "done" then
+        icon      = ICON.done
+        status_hl = "DbliteJobsDone"
+        meta      = string.format("%s · %.1fs · %s rows", ago, dur, j.rows ~= nil and tostring(j.rows) or "?")
+      elseif j.status == "error" then
+        icon      = ICON.error
+        status_hl = "DbliteJobsError"
+        meta      = string.format("%s · %s", ago, first_line(j.error))
+      else -- cancelled
+        icon      = ICON.cancelled
+        status_hl = "DbliteJobsCancelled"
+        meta      = string.format("%s · cancelled", ago)
+      end
     end
 
     local prefix  = "  "
@@ -216,7 +356,7 @@ local function job_at_cursor()
   if not state.winnr or not vim.api.nvim_win_is_valid(state.winnr) then return nil end
   local row = vim.api.nvim_win_get_cursor(state.winnr)[1]
   local id  = state.line_map[row]
-  return id and job_by_id(id)
+  return id and entry_by_id(id)
 end
 
 local function setup_keymaps(bufnr)
@@ -257,7 +397,8 @@ local function setup_keymaps(bufnr)
       if j.handle then pcall(function() j.handle:kill(15) end) end
       vim.notify("dblite: cancelling job → " .. (j.path or ""), vim.log.levels.INFO)
     else
-      M.remove(j.id)
+      M.remove(j.id)   -- drop the live copy (if any)
+      M.forget(j.id)   -- and delete it from the shared history
     end
   end, "dblite: cancel / dismiss job")
 
@@ -309,6 +450,7 @@ function M.open(opts)
   vim.wo[winnr].cursorline     = true
   vim.wo[winnr].winfixwidth    = true
 
+  load_history()  -- pick up entries from past sessions / other instances
   render()
   start_timer()
 

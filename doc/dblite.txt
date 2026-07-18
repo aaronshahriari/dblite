@@ -178,12 +178,21 @@ export runs until the database returns.
 
 `:Dblite jobs` (or |:DbliteJobs|) toggles the jobs panel, which lists each
 background export with a live spinner + elapsed seconds while running, then a
-`✓` and the final row count when done (or `✗` with the error). Finished jobs
-auto-clear after `jobs.cleanup_delay` seconds (default 300; 0 = keep until
-dismissed). In the panel: `<CR>` opens a finished job's output file in a new
-tab, `x` cancels a running job (or dismisses a finished one), `q` closes it.
+`✓` and the final row count when done (or `✗` with the error). In the panel:
+`<CR>` opens a finished job's output file in a new tab, `x` cancels a running
+job (or dismisses a finished one, deleting it from history), `q` closes it.
 Keys are configurable via `keymaps.jobs`; panel width and behaviour via the
 `jobs` config table.
+
+Finished jobs are recorded to a shared store (default
+`stdpath('data')/dblite/jobs.json`), so the panel shows past exports — with how
+long ago they finished, their duration and row count — across restarts and
+across every Neovim instance on the machine. Configure via `jobs.history`:
+`show` (how many past jobs to display), `max_entries` (how many to keep on
+disk), `enabled = false` (in-memory only), or `file` (override the location).
+Running jobs are never persisted, so a killed instance leaves no stuck
+"running" entry. `jobs.cleanup_delay` only controls how long a finished job
+stays in the live list before it is shown from history instead.
 
 Note: bulk export requires a native binary that includes `--to-file` support.
 If you installed a pre-built release binary, force a source rebuild with
@@ -588,10 +597,17 @@ defaults, so you only need to specify what you change. Defaults: >lua
 	  },
 	  jobs = {                          -- background bulk-export jobs
 	    panel = { width = 46 },
-	    cleanup_delay  = 300,           -- secs a finished job lingers; 0 = keep
+	    cleanup_delay  = 300,           -- secs a finished job stays in the live
+	                                    --   list; 0 = keep until dismissed
 	    default_format = 'csv',         -- default bulk format: 'csv' | 'json'
 	    open_on_start  = true,          -- auto-open the panel on job start
 	    focus          = true,          -- move cursor into the panel on toggle
+	    history = {                     -- persistent, shared across instances
+	      enabled     = true,           -- record finished jobs to disk
+	      show        = 20,             -- past jobs to display (0 = all kept)
+	      max_entries = 200,            -- hard cap kept on disk
+	      -- file = stdpath('data')..'/dblite/jobs.json'  -- override location
+	    },
 	  },
 	})
 <

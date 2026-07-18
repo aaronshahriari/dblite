@@ -230,7 +230,9 @@ The binds window is a vertical split by default; set `binds_split.style = 'float
 :DbliteRunBulk csv                      " omit the path to be prompted (with completion)
 ```
 
-Jobs run in the background, so you can keep running normal queries meanwhile. `:Dblite jobs` (or `:DbliteJobs`) toggles a **jobs panel** showing each background export with a live spinner + elapsed seconds while running, then `✓` and the final row count when done (or `✗` with the error). Finished jobs auto-clear after `jobs.cleanup_delay` seconds (default 300).
+Jobs run in the background, so you can keep running normal queries meanwhile. `:Dblite jobs` (or `:DbliteJobs`) toggles a **jobs panel** showing each background export with a live spinner + elapsed seconds while running, then `✓` and the final row count when done (or `✗` with the error).
+
+**Persistent history:** finished jobs are recorded to a shared store (`stdpath('data')/dblite/jobs.json` by default), so the panel shows your past exports — with how long ago they finished, their duration, and row count — even across restarts and **across every Neovim instance** on the machine. Control it via `jobs.history`: `show` (how many past jobs to display, e.g. last 10/50), `max_entries` (how many to keep on disk), or `enabled = false` for in-memory only. Dismissing a finished entry (`x`) deletes it from the store; running jobs are never persisted (so a killed instance leaves no stuck "running" entry).
 
 **Jobs panel keymaps:**
 
@@ -441,9 +443,16 @@ require('dblite').setup({
   },
   jobs = {                        -- background bulk-export jobs (:Dblite run bulk)
     panel = { width = 46 },       -- jobs-panel width in columns
-    cleanup_delay  = 300,         -- seconds a finished job lingers before auto-removal; 0 = keep until dismissed
+    cleanup_delay  = 300,         -- seconds a finished job lingers in the live list; 0 = keep until dismissed
     default_format = 'csv',       -- default bulk format: 'csv' | 'json'
     open_on_start  = true,        -- auto-open the jobs panel when a bulk export starts
+    focus          = true,        -- move the cursor into the panel when you toggle it open
+    history = {                   -- persistent job history, shared across all Neovim instances
+      enabled     = true,         -- record finished jobs to disk (false = in-memory only)
+      show        = 20,           -- how many past jobs to display in the panel (0 = all kept)
+      max_entries = 200,          -- hard cap on stored jobs; oldest dropped past this
+      -- file = stdpath('data')..'/dblite/jobs.json'  -- override the store location
+    },
   },
   connection_picker = 'panel',    -- 'panel' | 'telescope' (requires telescope.nvim)
   telescope_picker = {
