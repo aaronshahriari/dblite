@@ -635,9 +635,21 @@ local function format_bind_value(v)
   return "'" .. s:gsub("'", "''") .. "'"
 end
 
+-- Find :bind references, ignoring anything that only *looks* like one: text
+-- inside string literals, quoted identifiers or comments, and — crucially — the
+-- identifier after a `::` cast / scope-resolution operator (e.g. `col::type`,
+-- `SCHEMA::obj`). Without the last rule a token like `x::refs` was wrongly
+-- reported as a missing bind `refs`. We blank those spans (preserving length)
+-- before scanning so column/byte offsets stay intact.
 local function parse_bind_names(sql)
   local seen, names = {}, {}
-  local stripped = sql:gsub("'[^']*'", function(s) return string.rep(" ", #s) end)
+  local blank = function(s) return string.rep(" ", #s) end
+  local stripped = sql
+    :gsub("/%*.-%*/", blank)      -- /* block comments */
+    :gsub("%-%-[^\n]*", blank)    -- -- line comments
+    :gsub("'[^']*'", blank)       -- 'string literals'
+    :gsub('"[^"]*"', blank)       -- "quoted identifiers"
+    :gsub("::", "  ")             -- cast / scope operator, not a bind
   for raw in stripped:gmatch(":[a-zA-Z_][a-zA-Z0-9_.]*") do
     local key = raw:sub(2):gsub("%.+$", "")
     if not seen[key] then seen[key] = true; table.insert(names, key) end
