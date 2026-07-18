@@ -919,6 +919,18 @@ function M.run_async(format, path)
     end
   end
   path = vim.fn.fnamemodify(vim.fn.expand(path), ":p")
+  local existing = vim.uv.fs_stat(path)
+  if existing and existing.type == "directory" then
+    vim.notify("dblite: bulk export target is a directory: " .. path, vim.log.levels.ERROR)
+    return
+  end
+  if existing then
+    local choice = vim.fn.confirm("Overwrite existing file?\n\n" .. path, "&Yes\n&No", 2)
+    if choice ~= 1 then
+      vim.notify("dblite: bulk export cancelled", vim.log.levels.INFO)
+      return
+    end
+  end
   vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
 
   if sr then set_flash(bufnr, sr, sc, er, ec) end

@@ -4,8 +4,7 @@
 -- file by the native binary (`--to-file`). Jobs run detached from the main
 -- dblite result buffer so the user can keep running normal queries while a big
 -- dump churns in the background. This module owns the job registry and the
--- panel that visualises it (spinner + elapsed seconds while running, a ✓/✗ when
--- done, auto-removed after `config.jobs.cleanup_delay` seconds).
+-- panel that visualises it (status, file name, duration, and row count).
 local config = require("dblite.config")
 
 local M = {}
@@ -20,8 +19,7 @@ vim.api.nvim_set_hl(0, "DbliteJobsError",     { link = "DiagnosticError", defaul
 vim.api.nvim_set_hl(0, "DbliteJobsCancelled", { link = "WarningMsg",      default = true })
 vim.api.nvim_set_hl(0, "DbliteJobsMeta",      { link = "Comment",         default = true })
 
-local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
-local ICON = { done = "✓", error = "✗", cancelled = "⊘" }
+local ICON = { running = "…", done = "✓", error = "✗", cancelled = "✗" }
 
 local jobs = {}   -- live job records for THIS instance (running + pending cleanup)
 
@@ -39,8 +37,6 @@ local state = {
   winnr      = nil,
   line_map   = {},   -- panel line (1-based) → job id
   prev_winnr = nil,
-  timer      = nil,  -- repeating render timer (runs only while panel is open)
-  spin_idx   = 1,
 }
 
 -- --- Persistent history ---------------------------------------------------
@@ -212,18 +208,23 @@ local function trunc(s, n)
   return vim.fn.strcharpart(s, 0, n - 1) .. "…"
 end
 
-local function first_line(s)
-  return (vim.split(tostring(s or ""), "\n", { plain = true })[1] or ""):gsub("%s+$", "")
+local function format_duration(j)
+  if j.status == "running" then return "running" end
+  if not j.duration then return "?s" end
+  return string.format("%.1fs", j.duration)
 end
 
-local function relative_time(t)
-  if not t then return "" end
-  local d = os.time() - t
-  if d < 5     then return "just now" end
-  if d < 60    then return d .. "s ago" end
-  if d < 3600  then return math.floor(d / 60) .. "m ago" end
-  if d < 86400 then return math.floor(d / 3600) .. "h ago" end
-  return math.floor(d / 86400) .. "d ago"
+local function format_rows(rows)
+  return (rows ~= nil and tostring(rows) or "?") .. " rows"
+end
+
+local function file_name(j)
+  local name = j.label or j.path or "?"
+  return name == "?" and name or vim.fn.fnamemodify(name, ":t")
+end
+
+local function confirm(prompt)
+  return vim.fn.confirm(prompt, "&Yes\n&No", 2) == 1
 end
 
 -- The panel's display list: this instance's live jobs (running + pending
@@ -268,32 +269,30 @@ local function build_lines()
   for _, j in ipairs(entries) do
     local icon, status_hl, meta
     if j.status == "running" then
-      local secs = j.start and (vim.uv.now() - j.start) / 1000 or 0
-      icon      = SPINNER[state.spin_idx]
+      icon      = ICON.running
       status_hl = "DbliteJobsRunning"
-      meta      = string.format("%ds", math.floor(secs))
+      meta      = format_duration(j) .. " · " .. format_rows(j.rows)
     else
-      local ago = relative_time(j.finished_at)
-      local dur = j.duration or 0
       if j.status == "done" then
         icon      = ICON.done
         status_hl = "DbliteJobsDone"
-        meta      = string.format("%s · %.1fs · %s rows", ago, dur, j.rows ~= nil and tostring(j.rows) or "?")
+        meta      = format_duration(j) .. " · " .. format_rows(j.rows)
       elseif j.status == "error" then
         icon      = ICON.error
         status_hl = "DbliteJobsError"
-        meta      = string.format("%s · %s", ago, first_line(j.error))
+        meta      = format_duration(j) .. " · " .. format_rows(j.rows)
       else -- cancelled
         icon      = ICON.cancelled
         status_hl = "DbliteJobsCancelled"
-        meta      = string.format("%s · cancelled", ago)
+        meta      = format_duration(j) .. " · " .. format_rows(j.rows)
       end
     end
 
     local prefix  = "  "
     local mid     = "  "
-    local labelf  = trunc(j.label or j.path or "?", 20)
-    local pad     = string.rep(" ", math.max(1, 21 - vim.fn.strdisplaywidth(labelf)))
+    local label_width = math.max(8, width - 8 - vim.fn.strdisplaywidth(meta))
+    local labelf  = trunc(file_name(j), label_width)
+    local pad     = string.rep(" ", math.max(1, label_width + 1 - vim.fn.strdisplaywidth(labelf)))
     local line    = prefix .. icon .. mid .. labelf .. pad .. meta
 
     table.insert(lines, line)
@@ -333,25 +332,6 @@ end
 
 -- --- Panel window ---------------------------------------------------------
 
-local function start_timer()
-  if state.timer then return end
-  local timer = vim.uv.new_timer()
-  timer:start(0, 120, vim.schedule_wrap(function()
-    if not state.winnr or not vim.api.nvim_win_is_valid(state.winnr) then return end
-    state.spin_idx = (state.spin_idx % #SPINNER) + 1
-    render()
-  end))
-  state.timer = timer
-end
-
-local function stop_timer()
-  if state.timer then
-    state.timer:stop()
-    state.timer:close()
-    state.timer = nil
-  end
-end
-
 local function job_at_cursor()
   if not state.winnr or not vim.api.nvim_win_is_valid(state.winnr) then return nil end
   local row = vim.api.nvim_win_get_cursor(state.winnr)[1]
@@ -387,20 +367,31 @@ local function setup_keymaps(bufnr)
     if target and vim.api.nvim_win_is_valid(target) then
       vim.api.nvim_set_current_win(target)
     end
+    if not (config.jobs and config.jobs.close_on_open == false) then
+      M.close()
+    end
     vim.cmd("tabedit " .. vim.fn.fnameescape(j.path))
   end, "dblite: open job output")
 
-  map(km.cancel or "x", function()
+  local function cancel_or_delete()
     local j = job_at_cursor()
     if not j then return end
     if j.status == "running" then
+      if not confirm("Cancel running job?\n\n" .. file_name(j)) then return end
       if j.handle then pcall(function() j.handle:kill(15) end) end
       vim.notify("dblite: cancelling job → " .. (j.path or ""), vim.log.levels.INFO)
     else
+      if not confirm("Delete job from history?\n\n" .. file_name(j)) then return end
       M.remove(j.id)   -- drop the live copy (if any)
       M.forget(j.id)   -- and delete it from the shared history
     end
-  end, "dblite: cancel / dismiss job")
+  end
+
+  local cancel_lhs = km.cancel or "x"
+  map(cancel_lhs, cancel_or_delete, "dblite: cancel / delete job")
+  if cancel_lhs == "x" then
+    map("X", cancel_or_delete, "dblite: cancel / delete job")
+  end
 
   map(km.close or "q", function() M.close() end, "dblite: close jobs panel")
 
@@ -437,10 +428,20 @@ function M.open(opts)
     setup_keymaps(bufnr)
   end
 
-  local width = (config.jobs and config.jobs.panel and config.jobs.panel.width) or 46
-  vim.cmd("botright " .. width .. "vsplit")
-  local winnr = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(winnr, state.bufnr)
+  local panel_cfg = config.jobs and config.jobs.panel or {}
+  local max_width = math.max(1, vim.o.columns - 4)
+  local max_height = math.max(3, vim.o.lines - 4)
+  local width = math.min(panel_cfg.width or 46, max_width)
+  local height = math.min(panel_cfg.height or math.max(3, math.floor(vim.o.lines * 0.6)), max_height)
+  local winnr = vim.api.nvim_open_win(state.bufnr, opts.focus ~= false, {
+    relative = "editor",
+    style = "minimal",
+    border = "rounded",
+    width = width,
+    height = height,
+    row = 1,
+    col = math.max(0, vim.o.columns - width - 2),
+  })
   state.winnr = winnr
 
   vim.wo[winnr].number         = false
@@ -448,18 +449,15 @@ function M.open(opts)
   vim.wo[winnr].signcolumn     = "no"
   vim.wo[winnr].wrap           = false
   vim.wo[winnr].cursorline     = true
-  vim.wo[winnr].winfixwidth    = true
 
   load_history()  -- pick up entries from past sessions / other instances
   render()
-  start_timer()
 
   vim.api.nvim_create_autocmd("WinClosed", {
     pattern  = tostring(winnr),
     once     = true,
     callback = function()
       state.winnr = nil
-      stop_timer()
     end,
   })
 
@@ -473,7 +471,6 @@ function M.close()
     vim.api.nvim_win_close(state.winnr, true)
   end
   state.winnr = nil
-  stop_timer()
   if state.prev_winnr and vim.api.nvim_win_is_valid(state.prev_winnr) then
     vim.api.nvim_set_current_win(state.prev_winnr)
   end
