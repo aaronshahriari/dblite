@@ -45,6 +45,7 @@ The database work runs in a native binary (GraalVM), so there's **no JVM at runt
 - **Named connections** with `$ENV_VAR` password references, stored at `chmod 600`.
 - **Typed bind parameters** from a `dblite.binds.json` file — numbers, quoted strings, and raw SQL expressions.
 - **Export** the entire result set (not just the current page) to CSV or JSON.
+- **Load** a CSV into a table with a SQL\*Loader-style `LOAD DATA` block — previewed as `INSERT`s before you commit.
 - **Inspect** any page untruncated as JSON, table, or CSV.
 - **SQL autocomplete** via [blink.cmp](https://github.com/Saghen/blink.cmp) — tables, columns, and bind names from the live schema.
 - **Connection UI** — a built-in side panel, or an opt-in [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) picker.
@@ -155,6 +156,7 @@ SQL Server connections use `encrypt=true;trustServerCertificate=true` for broad 
 | `:Dblite toggle dbout` | Show/hide the result window (query keeps running if in-flight) |
 | `:Dblite inspect [json\|table\|csv]` | Open the current page untruncated in a scratch window |
 | `:Dblite export <csv\|json> [path]` | Write the **entire** result set to a file |
+| `:Dblite load` | Load a CSV into a table from a `LOAD DATA` control block (preview, then commit) |
 
 Trailing semicolons are stripped automatically. The legacy `:DbliteRun`, `:DbliteRunAt`, and `:DbliteToggleOut` commands remain as aliases. Running from a different tab moves the dbout split to that tab.
 
@@ -209,6 +211,39 @@ The binds window is a vertical split by default; set `binds_split.style = 'float
 ```
 
 `~`, env vars, and relative paths are expanded, and missing parent directories are created. CSV is RFC-4180 escaped; JSON is pretty-printed via `jq` when available (compact fallback otherwise).
+
+</details>
+
+<details>
+<summary><b>Loading CSV data</b></summary>
+
+Write a SQL\*Loader-style control block in any buffer and run `:Dblite load` (or `:DbliteLoad`). dblite parses it, reads the CSV, and opens a **preview** of the `INSERT`s it will run — nothing touches the database until you commit:
+
+```
+LOAD DATA
+INFILE 'employees.csv'
+INTO TABLE employees
+SKIP 1
+FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
+TRAILING NULLCOLS
+( employee_id, name, department )
+```
+
+In the preview buffer, press `<CR>` to commit — the `INSERT`s run through script mode and land as a per-row OK/ERROR log in dbout — or `q` to cancel. The preview is editable SQL, so you can tweak it before committing. Keys are set by `keymaps.load`; the window style by `load_view` (`tab` | `vertical` | `horizontal` | `float`).
+
+> This is an **emulation**, not real `sqlldr` — the `dblite` binary has no Oracle client, so a practical subset of the control syntax is converted to `INSERT`s and run over your existing JDBC connection.
+
+| Control clause | Behaviour |
+|---|---|
+| `INFILE 'path'` | CSV path — relative to cwd, `~` and `$ENV_VAR` expanded (`INFILE *` unsupported) |
+| `INTO TABLE name` | Target table; optional `APPEND` (default), `REPLACE` (DELETE first), or `TRUNCATE` |
+| `SKIP n` | Skip the first `n` rows (e.g. a header) |
+| `FIELDS TERMINATED BY 'c'` | Field separator (default `,`; also `X'09'` hex, e.g. tab) |
+| `(OPTIONALLY) ENCLOSED BY 'c'` | Quote character (default `"`) |
+| `TRAILING NULLCOLS` | Pad rows with fewer fields than columns as `NULL` |
+| `( col, col, ... )` | Target columns, in file order |
+
+Values are typed best-effort: numbers unquoted, empty fields become `NULL`, everything else is single-quoted (with `''` escaping). Dates rely on Oracle's implicit NLS conversion. Per-column datatypes/transforms, positional fields, and direct-path are not supported.
 
 </details>
 
@@ -311,6 +346,7 @@ db.execute()               -- run the current buffer
 db.execute_at_cursor()     -- run the statement under the cursor
 db.toggle_dbout()          -- show/hide the result window
 db.inspect(format)         -- 'json' | 'table' | 'csv'
+db.load()                  -- preview + commit a LOAD DATA control block in the buffer
 db.toggle_binds()          -- toggle the dblite.binds.json split
 db.toggle_panel()          -- toggle the connections panel
 db.get_active_conn()       -- active connection object, or nil
@@ -362,6 +398,7 @@ require('dblite').setup({
   filetype       = '',            -- filetype for the result buffer ('' = no highlighting)
   flash_timeout  = 2000,          -- ms to hold the query highlight; 0 = hold until results
   json_view      = 'tab',         -- where inspect opens: 'tab' | 'vertical' | 'horizontal' | 'float'
+  load_view      = 'tab',         -- where the CSV-load preview opens: 'tab' | 'vertical' | 'horizontal' | 'float'
   inspect_format = 'json',        -- default inspect format: 'json' | 'table' | 'csv'
   inspect_expand_json = true,     -- json inspect: decode cell values that are themselves JSON strings
   panel = {
@@ -406,6 +443,7 @@ require('dblite').setup({
       fullscreen = '<leader>l',   -- toggle dbout fullscreen
     },
     panel = { select = '<CR>', edit = 'cw', close = 'q' },
+    load  = { commit = '<CR>', cancel = 'q' },  -- CSV-load preview buffer
   },
 })
 ```
