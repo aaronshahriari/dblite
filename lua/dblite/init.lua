@@ -1758,6 +1758,19 @@ local function setup_binds_keymaps(bufnr)
 end
 
 local function open_binds_split()
+  -- Opening a window is illegal while the command-line window (q:/q/) is open:
+  -- the split branch changes the window layout and the float branch switches
+  -- into a new window, both of which raise E11. This is reachable from commands
+  -- run out of the cmdwin (e.g. :DbliteRun landing on a missing bind), so if
+  -- we're in it, wait for the user to leave and then open the binds file.
+  if vim.fn.getcmdwintype() ~= "" then
+    vim.api.nvim_create_autocmd("CmdwinLeave", {
+      once     = true,
+      callback = function() vim.schedule(open_binds_split) end,
+    })
+    return
+  end
+
   local path = ensure_binds_file()
   local split_cfg = config.binds_split or {}
 
