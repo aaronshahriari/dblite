@@ -451,8 +451,10 @@ The unified :Dblite forms and these individual commands are equivalent;
 ==============================================================================
 15. KEYMAPS						*dblite-keymaps*
 
-dblite sets keymaps in three scopes. All are configurable (see
-|dblite-config|); set any mapping to "" or false to disable it.
+dblite sets keymaps in several scopes. All are configurable (see
+|dblite-config|); set any mapping to "" or false to disable it. Editor maps are
+buffer-local (set only in `filetypes` buffers), so they never fire in unrelated
+buffers or windows — no hand-rolled autocmds needed.
 
 dbout buffer ~  (active only inside the result buffer)
 
@@ -465,12 +467,29 @@ dbout buffer ~  (active only inside the result buffer)
 	`gi`		inspect page		`keymaps.dbout.inspect`
 	`<C-c>`		cancel query		`keymaps.dbout.cancel`
 
-editor (SQL buffers) ~  (set on FileType sql,plsql,mysql,sqlite)
+editor (SQL buffers) ~  (buffer-local; set on the `filetypes` buffers)
 
 	`<leader>b`	toggle binds window	`keymaps.editor.binds`
 	`<leader>l`	toggle dbout fullscreen	`keymaps.editor.fullscreen`
 	`K`		hover bind value	`keymaps.editor.hover_bind`
-			(also `keymaps.editor.connections` if you set it)
+
+The following editor actions are unbound by default (lhs = ""); set an lhs to
+enable them (buffer-local, SQL buffers only):
+
+	`keymaps.editor.run`		run the whole buffer
+	`keymaps.editor.run_at`		run the statement under the cursor
+	`keymaps.editor.run_script`	run the buffer as a SQL*Plus script
+	`keymaps.editor.run_bulk`	background bulk export to a file
+	`keymaps.editor.toggle_dbout`	show/hide the result window
+	`keymaps.editor.toggle_panel`	toggle the connections panel
+	`keymaps.editor.toggle_jobs`	toggle the background-jobs panel
+	`keymaps.editor.inspect`	inspect the current page untruncated
+	`keymaps.editor.connections`	open the connections JSON file
+
+For anything more custom, use the `on_attach(bufnr)` hook (|dblite-config|) —
+it runs once per SQL buffer after the built-in maps, the idiomatic replacement
+for hand-rolled FileType/BufWinEnter autocmds. `require('dblite').attach(buf)`
+applies the editor maps + on_attach to a buffer on demand.
 
 panel ~  (active inside the connections panel)
 
@@ -478,8 +497,14 @@ panel ~  (active inside the connections panel)
 	`cw`		edit connection		`keymaps.panel.edit`
 	`q`		close panel		`keymaps.panel.close`
 
-dblite defines no <leader>-prefixed mappings for running queries; bind those
-yourself against the |dblite-api| (see the example in |dblite-config|).
+jobs ~  (active inside the background-jobs panel)
+
+	`<CR>`		open job output file	`keymaps.jobs.open`
+	`x`		cancel / dismiss job	`keymaps.jobs.cancel`
+	`q`		close panel		`keymaps.jobs.close`
+
+dblite binds no query-running keys by default; enable them via `keymaps.editor`
+above, `on_attach`, or against the |dblite-api|.
 
 ==============================================================================
 16. CONFIGURATION					*dblite-config*
@@ -494,6 +519,10 @@ defaults, so you only need to specify what you change. Defaults: >lua
 	  max_col_width  = 50,            -- truncate cells wider than this; 0=off
 	  max_history    = 20,            -- past results to keep; 0 = unlimited
 	  show_column_types = false,      -- show [TYPE] in headers by default
+	  filetypes      = { 'sql', 'plsql', 'mysql', 'sqlite' }, -- buffers to
+	                                  --   attach editor keymaps + on_attach to
+	  on_attach      = nil,           -- function(bufnr): custom per-SQL-buffer
+	                                  --   setup (buffer-local keybinds, etc.)
 	  filetype       = '',            -- dbout filetype ('' = no highlighting)
 	  flash_timeout  = 2000,          -- ms to hold query flash; 0 = until done
 	  json_view      = 'tab',         -- inspect window: tab|vertical|
@@ -537,13 +566,30 @@ defaults, so you only need to specify what you change. Defaults: >lua
 	      hover_query  = 'K',
 	      toggle_types = 'd',
 	    },
-	    editor = {
-	      binds      = '<leader>b',
-	      fullscreen = '<leader>l',
-	      hover_bind = 'K',
-	      -- connections = '<leader>dc',  -- opt-in: open connections JSON
+	    editor = {  -- buffer-local (SQL buffers only); '' = disabled
+	      run          = '',    -- run the whole buffer
+	      run_at       = '',    -- run the statement under the cursor
+	      run_script   = '',    -- run the buffer as a SQL*Plus script
+	      run_bulk     = '',    -- background bulk export to a file
+	      toggle_dbout = '',    -- show/hide the result window
+	      toggle_panel = '',    -- toggle the connections panel
+	      toggle_jobs  = '',    -- toggle the background-jobs panel
+	      inspect      = '',    -- inspect current page untruncated
+	      binds        = '<leader>b',
+	      connections  = '',    -- open the connections JSON file
+	      fullscreen   = '<leader>l',
+	      hover_bind   = 'K',
 	    },
 	    panel = { select = '<CR>', edit = 'cw', close = 'q' },
+	    jobs  = { open = '<CR>', cancel = 'x', close = 'q' },
+	    load  = { commit = '<CR>', cancel = 'q' },
+	  },
+	  jobs = {                          -- background bulk-export jobs
+	    panel = { width = 46 },
+	    cleanup_delay  = 300,           -- secs a finished job lingers; 0 = keep
+	    default_format = 'csv',         -- default bulk format: 'csv' | 'json'
+	    open_on_start  = true,          -- auto-open the panel on job start
+	    focus          = true,          -- move cursor into the panel on toggle
 	  },
 	})
 <
@@ -555,9 +601,14 @@ All functionality is available programmatically: >lua
 
 	db.execute()               -- run the current buffer as a query
 	db.execute_at_cursor()     -- run the statement under the cursor
+	db.execute_script()        -- run the buffer as a SQL*Plus script
+	db.run_async(fmt, path)    -- background bulk export ('csv'|'json');
+	                           --   both args optional (prompts if omitted)
 	db.toggle_dbout()          -- show/hide the result window
 	db.toggle_fullscreen()     -- toggle dbout fullscreen tab
 	db.inspect(format)         -- 'json' | 'table' | 'csv'
+	db.export(format, path)    -- write the full result set to a file
+	db.load()                  -- load a CSV via a LOAD DATA control block
 	db.toggle_binds()          -- toggle the dblite.binds.json window
 	db.open_binds()            -- open/focus the binds window (no close)
 	db.edit_binds()            -- alias for toggle_binds()
@@ -566,15 +617,25 @@ All functionality is available programmatically: >lua
 	db.open_panel()            -- open the panel
 	db.close_panel()           -- close the panel
 	db.is_panel_open()         -- returns true/false
+	db.toggle_jobs()           -- open/close the background-jobs panel
+	db.open_jobs()             -- open the jobs panel
+	db.close_jobs()            -- close the jobs panel
+	db.is_jobs_open()          -- returns true/false
 	db.hover_bind()            -- hover the bind token under the cursor
+	db.pick_connection()       -- open the configured connection picker
 	db.get_active_conn()       -- the active connection table, or nil
 	db.get_flat_binds()        -- flattened dblite.binds.json as a table
+	db.attach(bufnr)           -- apply editor keymaps + on_attach to a buffer
 <
-Example user keymaps (dblite does not set these): >lua
+Example user keymaps. Prefer `keymaps.editor` or `on_attach` (|dblite-config|)
+so these stay buffer-local to SQL buffers; a global map like below fires
+everywhere: >lua
 	local db = require('dblite')
 	vim.keymap.set('n', '<leader>dr', db.execute,           { desc = 'dblite: run' })
 	vim.keymap.set('n', '<leader>de', db.execute_at_cursor, { desc = 'dblite: run at cursor' })
+	vim.keymap.set('n', '<leader>db', function() db.run_async() end, { desc = 'dblite: bulk' })
 	vim.keymap.set('n', '<leader>dp', db.toggle_panel,      { desc = 'dblite: panel' })
+	vim.keymap.set('n', '<leader>dj', db.toggle_jobs,       { desc = 'dblite: jobs' })
 	vim.keymap.set('n', '<leader>do', db.toggle_dbout,      { desc = 'dblite: dbout' })
 <
 ==============================================================================

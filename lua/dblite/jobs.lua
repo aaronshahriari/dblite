@@ -266,8 +266,13 @@ end
 
 -- Open the panel. opts.focus = false leaves the cursor in the previous window
 -- (used when auto-opening on job start so we don't steal focus from the editor).
+-- When opts.focus is nil, fall back to `config.jobs.focus` (default true).
 function M.open(opts)
   opts = opts or {}
+  if opts.focus == nil then
+    local jc = config.jobs
+    opts.focus = not (jc and jc.focus == false)
+  end
   local prev = vim.api.nvim_get_current_win()
 
   if state.winnr and vim.api.nvim_win_is_valid(state.winnr) then

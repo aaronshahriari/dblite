@@ -427,6 +427,8 @@ require('dblite').setup({
   max_col_width  = 50,            -- truncate cells wider than this; 0 = no limit
   max_history    = 20,            -- past query results to keep; 0 = unlimited
   show_column_types = false,      -- show [TYPE] next to column headers by default
+  filetypes      = { 'sql', 'plsql', 'mysql', 'sqlite' }, -- buffers dblite attaches to (editor keymaps + on_attach)
+  on_attach      = nil,           -- function(bufnr) run per SQL buffer for custom buffer-local keybinds
   filetype       = '',            -- filetype for the result buffer ('' = no highlighting)
   flash_timeout  = 2000,          -- ms to hold the query highlight; 0 = hold until results
   json_view      = 'tab',         -- where inspect opens: 'tab' | 'vertical' | 'horizontal' | 'float'
@@ -476,9 +478,19 @@ require('dblite').setup({
       next = 'L', prev = 'H', cancel = '<C-c>', inspect = 'gi',
       history_prev = '[', history_next = ']', hover_query = 'K', toggle_types = 'd',
     },
-    editor = {
-      binds      = '<leader>b',   -- toggle dblite.binds.json split
-      fullscreen = '<leader>l',   -- toggle dbout fullscreen
+    editor = {  -- buffer-local, set only in `filetypes` buffers. '' = disabled.
+      run          = '',          -- run the whole buffer
+      run_at       = '',          -- run the statement under the cursor
+      run_script   = '',          -- run the buffer as a SQL*Plus script
+      run_bulk     = '',          -- background bulk export to a file
+      toggle_dbout = '',          -- show/hide the result window
+      toggle_panel = '',          -- toggle the connections panel
+      toggle_jobs  = '',          -- toggle the background-jobs panel
+      inspect      = '',          -- inspect current page untruncated
+      binds        = '<leader>b', -- toggle dblite.binds.json split
+      connections  = '',          -- open the connections JSON file
+      fullscreen   = '<leader>l', -- toggle dbout fullscreen
+      hover_bind   = 'K',         -- hover the bind value under the cursor
     },
     panel = { select = '<CR>', edit = 'cw', close = 'q' },
     jobs  = { open = '<CR>', cancel = 'x', close = 'q' },  -- background-jobs panel
@@ -486,6 +498,62 @@ require('dblite').setup({
   },
 })
 ```
+
+</details>
+
+<details>
+<summary><b>Custom keybindings</b></summary>
+
+dblite's editor keymaps are **buffer-local** and set only in the buffers listed in `filetypes` (default `sql`, `plsql`, `mysql`, `sqlite`), so they never fire in unrelated buffers or windows — no hand-rolled autocmds needed. Every action defaults to `''` (disabled); set an lhs to turn it on:
+
+```lua
+require('dblite').setup({
+  keymaps = {
+    editor = {
+      run      = '<leader>r',   -- run the whole buffer
+      run_at   = '<leader>rr',  -- run the statement under the cursor
+      run_bulk = '<leader>rb',  -- background bulk export
+      toggle_dbout = '<leader>o',
+      toggle_jobs  = '<leader>j',
+    },
+  },
+})
+```
+
+For anything more custom (conditional maps, visual-mode maps, extra behaviour), use the **`on_attach(bufnr)`** hook — the idiomatic replacement for manual `FileType`/`BufWinEnter` autocmds. It runs once per SQL buffer, after the built-in editor maps:
+
+```lua
+require('dblite').setup({
+  on_attach = function(buf)
+    local d, o = require('dblite'), { buffer = buf, silent = true }
+    vim.keymap.set('n', '<leader>r',  d.execute,                    o)
+    vim.keymap.set('n', '<leader>rr', d.execute_at_cursor,          o)
+    vim.keymap.set('n', '<leader>rb', function() d.run_async() end, o)
+    vim.keymap.set('n', '<leader>j',  d.toggle_jobs,                o)
+  end,
+})
+```
+
+Managing attachment yourself? `require('dblite').attach(bufnr)` applies the configured editor maps + runs `on_attach` for a buffer on demand.
+
+**Public API** (all on `require('dblite')`):
+
+| Function | Action |
+|---|---|
+| `execute()` | Run the whole buffer |
+| `execute_at_cursor()` | Run the statement under the cursor |
+| `execute_script()` | Run the buffer as a SQL\*Plus script |
+| `run_async(format?, path?)` | Background bulk export (prompts if args omitted) |
+| `toggle_dbout()` | Show/hide the result window |
+| `toggle_panel()` / `open_panel()` / `close_panel()` / `is_panel_open()` | Connections panel |
+| `toggle_jobs()` / `open_jobs()` / `close_jobs()` / `is_jobs_open()` | Background-jobs panel |
+| `toggle_fullscreen()` | Toggle dbout fullscreen |
+| `inspect(format?)` | Inspect the current page untruncated |
+| `export(format, path?)` | Write the full result set to a file |
+| `load()` | Load a CSV via a `LOAD DATA` control block |
+| `edit_binds()` / `hover_bind()` | Bind-parameter helpers |
+| `pick_connection()` / `get_active_conn()` | Connection helpers |
+| `attach(bufnr)` | Apply editor maps + `on_attach` to a buffer |
 
 </details>
 

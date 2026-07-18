@@ -12,6 +12,19 @@ end
 
 local M = {
   binary = resolve_binary(),
+  -- Filetypes dblite attaches to: editor keymaps (below) are set buffer-local
+  -- on these, and `on_attach` fires for each such buffer.
+  filetypes = { "sql", "plsql", "mysql", "sqlite" },
+  -- Optional per-buffer hook: on_attach(bufnr) runs once for every SQL buffer
+  -- (after the built-in editor keymaps are applied). Use it for custom,
+  -- buffer-local keybinds/behaviour instead of hand-rolled autocmds, e.g.
+  --   on_attach = function(buf)
+  --     local d, o = require("dblite"), { buffer = buf, silent = true }
+  --     vim.keymap.set("n", "<leader>r",  d.execute,           o)
+  --     vim.keymap.set("n", "<leader>rr", d.execute_at_cursor, o)
+  --     vim.keymap.set("n", "<leader>rb", function() d.run_async() end, o)
+  --   end
+  on_attach = nil,
   max_rows = 10000,
   split_dir = "horizontal", -- "vertical" | "horizontal" | "tab"
   split_size = {
@@ -31,6 +44,7 @@ local M = {
     cleanup_delay  = 300,    -- seconds a finished job lingers in the panel before auto-removal (0 = keep until dismissed)
     default_format = "csv",  -- default output format for bulk exports: "csv" | "json"
     open_on_start  = true,   -- pop the jobs panel open automatically when a bulk export starts
+    focus          = true,   -- when you toggle/open the panel (`:DbliteJobs`), move the cursor into it. false = keep the cursor where it is
   },
   -- How `:DblitePanel` / `M.toggle_panel()` select a connection:
   --   "panel"     → the built-in side panel (default)
@@ -81,10 +95,23 @@ local M = {
       hover_query  = "K",       -- hover to show the executed query
       toggle_types = "d",       -- toggle column type annotations
     },
+    -- Editor keymaps are buffer-local and set ONLY in SQL buffers (see
+    -- `filetypes` below), so they never fire in unrelated buffers/windows.
+    -- Everything except binds/fullscreen/hover_bind defaults to "" (disabled) —
+    -- set an lhs to enable it. For anything more custom, use `on_attach`.
     editor = {
-      binds      = "<leader>b",  -- open dblite.binds.json popup
-      fullscreen = "<leader>l",  -- toggle dbout fullscreen
-      hover_bind = "K",          -- hover to show bind value under cursor
+      run          = "",           -- run the whole buffer                (M.execute)
+      run_at       = "",           -- run the statement under the cursor  (M.execute_at_cursor)
+      run_script   = "",           -- run the buffer as a SQL*Plus script (M.execute_script)
+      run_bulk     = "",           -- background bulk export to a file    (M.run_async)
+      toggle_dbout = "",           -- show/hide the result window         (M.toggle_dbout)
+      toggle_panel = "",           -- toggle the connections panel        (M.toggle_panel)
+      toggle_jobs  = "",           -- toggle the background-jobs panel     (M.toggle_jobs)
+      inspect      = "",           -- inspect current page untruncated    (M.inspect)
+      binds        = "<leader>b",  -- open dblite.binds.json popup         (M.edit_binds)
+      connections  = "",           -- open the connections JSON file       (M.edit_connections_file)
+      fullscreen   = "<leader>l",  -- toggle dbout fullscreen              (M.toggle_fullscreen)
+      hover_bind   = "K",          -- hover to show bind value under cursor (M.hover_bind)
     },
     panel = {    -- keymaps active inside the connections panel
       select = "<CR>", -- activate connection under cursor

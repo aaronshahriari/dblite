@@ -64,33 +64,51 @@ local function merge_into(target, source)
   end
 end
 
+-- Editor actions bindable from a SQL buffer. Order is stable so `:map` output
+-- reads predictably. Each maps a `keymaps.editor` key → handler + description.
+local EDITOR_ACTIONS = {
+  { key = "run",          desc = "run buffer",              fn = function() M.execute() end },
+  { key = "run_at",       desc = "run statement at cursor", fn = function() M.execute_at_cursor() end },
+  { key = "run_script",   desc = "run buffer as script",    fn = function() M.execute_script() end },
+  { key = "run_bulk",     desc = "bulk background export",  fn = function() M.run_async() end },
+  { key = "toggle_dbout", desc = "toggle result window",    fn = function() M.toggle_dbout() end },
+  { key = "toggle_panel", desc = "toggle connections panel",fn = function() M.toggle_panel() end },
+  { key = "toggle_jobs",  desc = "toggle jobs panel",       fn = function() M.toggle_jobs() end },
+  { key = "inspect",      desc = "inspect current page",    fn = function() M.inspect() end },
+  { key = "binds",        desc = "edit bind parameters",    fn = function() M.edit_binds() end },
+  { key = "connections",  desc = "edit connections file",   fn = function() M.edit_connections_file() end },
+  { key = "fullscreen",   desc = "toggle dbout fullscreen", fn = function() M.toggle_fullscreen() end },
+  { key = "hover_bind",   desc = "hover bind value",        fn = function() M.hover_bind() end },
+}
+
+-- Apply dblite's buffer-local editor keymaps to `buf`, then run the user's
+-- on_attach hook. Exposed so users who manage attachment themselves can call it.
+function M.attach(buf)
+  local ek = (config.keymaps and config.keymaps.editor) or {}
+  for _, a in ipairs(EDITOR_ACTIONS) do
+    local lhs = ek[a.key]
+    if lhs and lhs ~= "" then
+      vim.keymap.set("n", lhs, a.fn,
+        { buffer = buf, silent = true, desc = "dblite: " .. a.desc })
+    end
+  end
+  if type(config.on_attach) == "function" then
+    local ok, err = pcall(config.on_attach, buf)
+    if not ok then
+      vim.notify("dblite: on_attach error: " .. tostring(err), vim.log.levels.ERROR)
+    end
+  end
+end
+
 function M.setup(opts)
   if opts then merge_into(config, opts) end
-  local ek = (config.keymaps and config.keymaps.editor) or {}
-  -- SQL-only keymaps: set per-buffer via FileType autocmd
-  local sql_fts = "sql,plsql,mysql,sqlite"
+  -- SQL-only keymaps + on_attach: applied per-buffer via a FileType autocmd, so
+  -- they are always buffer-local and never fire in unrelated buffers/windows.
+  local fts = config.filetypes or { "sql", "plsql", "mysql", "sqlite" }
   vim.api.nvim_create_autocmd("FileType", {
-    pattern  = vim.split(sql_fts, ","),
+    pattern  = fts,
     group    = vim.api.nvim_create_augroup("dblite_sql_keymaps", { clear = true }),
-    callback = function(ev)
-      local buf = ev.buf
-      if ek.binds and ek.binds ~= "" then
-        vim.keymap.set("n", ek.binds, function() M.edit_binds() end,
-          { buffer = buf, silent = true, desc = "dblite: edit bind parameters" })
-      end
-      if ek.connections and ek.connections ~= "" then
-        vim.keymap.set("n", ek.connections, function() M.edit_connections_file() end,
-          { buffer = buf, silent = true, desc = "dblite: edit connections file" })
-      end
-      if ek.fullscreen and ek.fullscreen ~= "" then
-        vim.keymap.set("n", ek.fullscreen, function() M.toggle_fullscreen() end,
-          { buffer = buf, silent = true, desc = "dblite: toggle dbout fullscreen" })
-      end
-      if ek.hover_bind and ek.hover_bind ~= "" then
-        vim.keymap.set("n", ek.hover_bind, function() M.hover_bind() end,
-          { buffer = buf, silent = true, desc = "dblite: hover bind value" })
-      end
-    end,
+    callback = function(ev) M.attach(ev.buf) end,
   })
 end
 
