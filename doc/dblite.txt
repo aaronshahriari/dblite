@@ -502,6 +502,8 @@ jobs ~  (active inside the background-jobs panel)
 	`<CR>`		open job output file	`keymaps.jobs.open`
 	`x`		cancel / dismiss job	`keymaps.jobs.cancel`
 	`q`		close panel		`keymaps.jobs.close`
+	(unset)		toggle from inside	`keymaps.jobs.toggle`
+			(set to your open key for symmetry)
 
 dblite binds no query-running keys by default; enable them via `keymaps.editor`
 above, `on_attach`, or against the |dblite-api|.
@@ -581,7 +583,7 @@ defaults, so you only need to specify what you change. Defaults: >lua
 	      hover_bind   = 'K',
 	    },
 	    panel = { select = '<CR>', edit = 'cw', close = 'q' },
-	    jobs  = { open = '<CR>', cancel = 'x', close = 'q' },
+	    jobs  = { open = '<CR>', cancel = 'x', close = 'q', toggle = '' },
 	    load  = { commit = '<CR>', cancel = 'q' },
 	  },
 	  jobs = {                          -- background bulk-export jobs

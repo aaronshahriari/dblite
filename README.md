@@ -239,6 +239,7 @@ Jobs run in the background, so you can keep running normal queries meanwhile. `:
 | `<CR>` | Open the output file of the job under the cursor in a new tab |
 | `x` | Cancel a running job / dismiss a finished one |
 | `q` | Close the panel |
+| `keymaps.jobs.toggle` | Toggle the panel from inside (off by default; set to your open key for symmetry) |
 
 There is **no client-side query timeout**, so a bulk export runs until the database returns — fine for multi-minute queries. Bind parameters are resolved the same way as normal queries.
 
@@ -493,7 +494,7 @@ require('dblite').setup({
       hover_bind   = 'K',         -- hover the bind value under the cursor
     },
     panel = { select = '<CR>', edit = 'cw', close = 'q' },
-    jobs  = { open = '<CR>', cancel = 'x', close = 'q' },  -- background-jobs panel
+    jobs  = { open = '<CR>', cancel = 'x', close = 'q', toggle = '' },  -- background-jobs panel
     load  = { commit = '<CR>', cancel = 'q' },  -- CSV-load preview buffer
   },
 })

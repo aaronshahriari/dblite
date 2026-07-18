@@ -122,6 +122,7 @@ local M = {
       open   = "<CR>", -- open the output file of the job under cursor
       cancel = "x",    -- cancel a running job / dismiss a finished one
       close  = "q",    -- close the jobs panel
+      toggle = "",     -- toggle the panel from inside (set to your open key for symmetry)
     },
     load = {     -- keymaps active inside the CSV-load preview buffer
       commit = "<CR>", -- run the generated INSERTs

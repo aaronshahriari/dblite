@@ -262,6 +262,10 @@ local function setup_keymaps(bufnr)
   end, "dblite: cancel / dismiss job")
 
   map(km.close or "q", function() M.close() end, "dblite: close jobs panel")
+
+  -- Optional: same key you opened the panel with can close it from inside.
+  -- Off by default (""); set to your open key's lhs for symmetry.
+  map(km.toggle, function() M.toggle() end, "dblite: toggle jobs panel")
 end
 
 -- Open the panel. opts.focus = false leaves the cursor in the previous window
