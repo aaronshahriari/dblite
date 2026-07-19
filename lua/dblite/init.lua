@@ -901,11 +901,17 @@ local function execute_core(query, script)
 end
 
 function M.execute()
+  -- When run from the command-line window (q:), defer until it closes so the
+  -- buffer read below targets the underlying SQL window, not the cmdwin.
+  if defer_if_in_cmdwin(M.execute) then return end
   local query = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
   execute_core(query)
 end
 
 function M.execute_at_cursor()
+  -- Defer out of the command-line window before reading the cursor — otherwise
+  -- at_cursor would grab the command text under the cursor in the cmdwin itself.
+  if defer_if_in_cmdwin(M.execute_at_cursor) then return end
   local bufnr = vim.api.nvim_get_current_buf()
   local sr, sc, er, ec, query = query_module.at_cursor(bufnr)
   if not sr or not query or query:match("^%s*$") then
@@ -919,6 +925,7 @@ end
 -- Run a whole SQL*Plus-style script: many statements (PL/SQL blocks terminated
 -- by a lone "/", plain statements by ";") executed in order on one connection.
 function M.execute_script(opts)
+  if defer_if_in_cmdwin(function() M.execute_script(opts) end) then return end
   local first, last
   if opts and opts.range and opts.range > 0 then
     first, last = opts.line1, opts.line2
