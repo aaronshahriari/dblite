@@ -725,23 +725,7 @@ local function render_script_log(parsed, elapsed)
   vim.bo[state.result_bufnr].modifiable = false
 end
 
--- Commands executed from the command-line window (q:/q/) run while it is still
--- open, where any window-layout change or window switch raises E11. Our run and
--- export paths open splits (the dbout result window, the binds file), so when
--- we're in the cmdwin we defer the whole operation until the user leaves it.
--- Returns true if it deferred (the caller should return immediately).
-local function defer_if_in_cmdwin(fn)
-  if vim.fn.getcmdwintype() == "" then return false end
-  vim.api.nvim_create_autocmd("CmdwinLeave", {
-    once     = true,
-    callback = function() vim.schedule(fn) end,
-  })
-  return true
-end
-
 local function execute_core(query, script)
-  if defer_if_in_cmdwin(function() execute_core(query, script) end) then return end
-
   if vim.fn.executable(config.binary) ~= 1 then
     local hint = _plugin_root
       and "run :DbliteBuild to compile the native binary"
@@ -901,17 +885,11 @@ local function execute_core(query, script)
 end
 
 function M.execute()
-  -- When run from the command-line window (q:), defer until it closes so the
-  -- buffer read below targets the underlying SQL window, not the cmdwin.
-  if defer_if_in_cmdwin(M.execute) then return end
   local query = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
   execute_core(query)
 end
 
 function M.execute_at_cursor()
-  -- Defer out of the command-line window before reading the cursor — otherwise
-  -- at_cursor would grab the command text under the cursor in the cmdwin itself.
-  if defer_if_in_cmdwin(M.execute_at_cursor) then return end
   local bufnr = vim.api.nvim_get_current_buf()
   local sr, sc, er, ec, query = query_module.at_cursor(bufnr)
   if not sr or not query or query:match("^%s*$") then
@@ -925,7 +903,6 @@ end
 -- Run a whole SQL*Plus-style script: many statements (PL/SQL blocks terminated
 -- by a lone "/", plain statements by ";") executed in order on one connection.
 function M.execute_script(opts)
-  if defer_if_in_cmdwin(function() M.execute_script(opts) end) then return end
   local first, last
   if opts and opts.range and opts.range > 0 then
     first, last = opts.line1, opts.line2
@@ -945,8 +922,6 @@ end
 -- straight to `path` (no --max-rows cap, no in-editor buffering) while the
 -- user keeps working. Progress shows in the jobs panel (:DbliteJobs).
 function M.run_async(format, path, range)
-  if defer_if_in_cmdwin(function() M.run_async(format, path, range) end) then return end
-
   format = (format or (config.jobs and config.jobs.default_format) or "csv"):lower()
   if format ~= "csv" and format ~= "json" then
     vim.notify("dblite: bulk format must be 'csv' or 'json'", vim.log.levels.ERROR)
@@ -1815,12 +1790,6 @@ local function setup_binds_keymaps(bufnr)
 end
 
 local function open_binds_split()
-  -- Opening a window is illegal while the command-line window (q:/q/) is open:
-  -- the split branch changes the window layout and the float branch switches
-  -- into a new window, both of which raise E11. This is reachable directly from
-  -- the cmdwin (e.g. :Dblite binds), so defer until the user leaves it.
-  if defer_if_in_cmdwin(open_binds_split) then return end
-
   local path = ensure_binds_file()
   local split_cfg = config.binds_split or {}
 
