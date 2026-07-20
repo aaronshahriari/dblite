@@ -40,7 +40,7 @@ local M = {
     width = 30,  -- columns for the side panel
   },
   jobs = {  -- background (async) bulk-export jobs — see `:Dblite run bulk`
-    panel = { width = 46 },  -- floating background-jobs panel width; optional height defaults to 60% of editor
+    panel = { width = 46 },  -- background-jobs panel: right-side vertical split, this many columns wide
     cleanup_delay  = 300,    -- seconds a finished job lingers in the LIVE list before removal (it stays visible via history); 0 = keep until deleted
     default_format = "csv",  -- default output format for bulk exports: "csv" | "json"
     open_on_start  = true,   -- pop the jobs panel open automatically when a bulk export starts

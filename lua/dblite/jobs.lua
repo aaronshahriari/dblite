@@ -559,20 +559,14 @@ function M.open(opts)
     setup_keymaps(bufnr)
   end
 
+  -- A right-side vertical split (like the connections panel), not a float, so it
+  -- coexists with the editor/result windows. winfixwidth keeps its width steady
+  -- as other splits open and close.
   local panel_cfg = config.jobs and config.jobs.panel or {}
-  local max_width = math.max(1, vim.o.columns - 4)
-  local max_height = math.max(3, vim.o.lines - 4)
-  local width = math.min(panel_cfg.width or 46, max_width)
-  local height = math.min(panel_cfg.height or math.max(3, math.floor(vim.o.lines * 0.6)), max_height)
-  local winnr = vim.api.nvim_open_win(state.bufnr, opts.focus ~= false, {
-    relative = "editor",
-    style = "minimal",
-    border = "rounded",
-    width = width,
-    height = height,
-    row = 1,
-    col = math.max(0, vim.o.columns - width - 2),
-  })
+  local width = panel_cfg.width or 46
+  vim.cmd("botright " .. width .. "vsplit")
+  local winnr = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(winnr, state.bufnr)
   state.winnr = winnr
 
   vim.wo[winnr].number         = false
@@ -580,6 +574,7 @@ function M.open(opts)
   vim.wo[winnr].signcolumn     = "no"
   vim.wo[winnr].wrap           = false
   vim.wo[winnr].cursorline     = true
+  vim.wo[winnr].winfixwidth    = true
 
   load_history()  -- pick up entries from past sessions / other instances
   render()
