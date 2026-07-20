@@ -384,6 +384,42 @@ local function job_at_cursor()
   return id and entry_by_id(id)
 end
 
+local function human_time(t)
+  return t and os.date("%Y-%m-%d %H:%M:%S", t) or "?"
+end
+
+-- Re-point a job at a new output path (e.g. after it was moved/renamed on disk)
+-- and persist it, so future opens jump to the right place. Updates the live copy
+-- and the history record for the same id together.
+local function update_path(entry, new_path)
+  entry.path = new_path
+  local j = job_by_id(entry.id)
+  if j and j ~= entry then j.path = new_path end
+  persist(entry)  -- merge into the shared history file + refresh the cache
+  M.refresh()
+end
+
+-- Prompt for the file's new location (prefilled with the last-known path) and,
+-- if the entered path is readable, remember it. `on_ok` runs after a successful
+-- relocate — used so the open flow can chain straight into opening the file.
+local function relocate(entry, on_ok)
+  vim.ui.input({
+    prompt   = "New path for \"" .. file_name(entry) .. "\": ",
+    default  = entry.path or "",
+    completion = "file",
+  }, function(input)
+    if not input or input == "" then return end
+    local path = vim.fn.fnamemodify(vim.fn.expand(input), ":p")
+    if vim.fn.filereadable(path) ~= 1 then
+      vim.notify("dblite: file not found: " .. path, vim.log.levels.WARN)
+      return
+    end
+    update_path(entry, path)
+    vim.notify("dblite: job re-pointed → " .. path, vim.log.levels.INFO)
+    if on_ok then on_ok(path) end
+  end)
+end
+
 local function setup_keymaps(bufnr)
   local km = (config.keymaps and config.keymaps.jobs) or {}
 
@@ -391,6 +427,18 @@ local function setup_keymaps(bufnr)
     if lhs and lhs ~= "" then
       vim.keymap.set("n", lhs, fn, { buffer = bufnr, silent = true, desc = desc })
     end
+  end
+
+  -- Open a job's output file in a new tab (leaving the panel per close_on_open).
+  local function open_output(path)
+    local target = state.prev_winnr
+    if target and vim.api.nvim_win_is_valid(target) then
+      vim.api.nvim_set_current_win(target)
+    end
+    if not (config.jobs and config.jobs.close_on_open == false) then
+      M.close()
+    end
+    vim.cmd("tabedit " .. vim.fn.fnameescape(path))
   end
 
   map(km.open or "<CR>", function()
@@ -404,19 +452,57 @@ local function setup_keymaps(bufnr)
       vim.notify("dblite: no output file (" .. j.status .. ")", vim.log.levels.WARN)
       return
     end
+    -- The file may have been moved/renamed on disk since the export ran. Rather
+    -- than dead-end, offer to re-point the job at its new location and open it.
     if vim.fn.filereadable(j.path) ~= 1 then
-      vim.notify("dblite: output file not found: " .. tostring(j.path), vim.log.levels.WARN)
+      if confirm("Output file not found:\n\n" .. tostring(j.path) .. "\n\nLocate it now?") then
+        relocate(j, function(path) open_output(path) end)
+      end
       return
     end
-    local target = state.prev_winnr
-    if target and vim.api.nvim_win_is_valid(target) then
-      vim.api.nvim_set_current_win(target)
-    end
-    if not (config.jobs and config.jobs.close_on_open == false) then
-      M.close()
-    end
-    vim.cmd("tabedit " .. vim.fn.fnameescape(j.path))
+    open_output(j.path)
   end, "dblite: open job output")
+
+  map(km.hover or "K", function()
+    local j = job_at_cursor()
+    if not j then return end
+    local missing = j.status == "done" and vim.fn.filereadable(j.path or "") ~= 1
+    local lines = {
+      "Status:   " .. (j.status or "?") .. (missing and "  (file missing)" or ""),
+      "File:     " .. (j.path or "?"),
+      "Format:   " .. (j.format or "?"),
+      "Conn:     " .. (j.conn_name or "?"),
+      "Rows:     " .. (j.rows ~= nil and tostring(j.rows) or "?"),
+      "Duration: " .. format_duration(j),
+      "Started:  " .. human_time(j.started_at),
+      "Finished: " .. human_time(j.finished_at),
+    }
+    if j.error and j.error ~= "" then
+      table.insert(lines, "Error:    " .. tostring(j.error))
+    end
+    if j.query and j.query ~= "" then
+      table.insert(lines, "")
+      table.insert(lines, "Query:")
+      for _, q in ipairs(vim.split(j.query, "\n", { plain = true })) do
+        table.insert(lines, "  " .. q)
+      end
+    end
+    vim.lsp.util.open_floating_preview(lines, "", {
+      border   = "rounded",
+      focus_id = "dblite_job_hover",
+      wrap     = false,
+    })
+  end, "dblite: hover job details")
+
+  map(km.relocate or "r", function()
+    local j = job_at_cursor()
+    if not j then return end
+    if j.status ~= "done" then
+      vim.notify("dblite: nothing to relocate (" .. j.status .. ")", vim.log.levels.INFO)
+      return
+    end
+    relocate(j)
+  end, "dblite: relocate job output file")
 
   local function cancel_or_delete()
     local j = job_at_cursor()
