@@ -420,6 +420,52 @@ local function relocate(entry, on_ok)
   end)
 end
 
+-- Hover-style details float. open_floating_preview anchors at the cursor, so in
+-- the narrow panel it only gets the panel's width and clips long paths/queries.
+-- Instead we anchor to the editor and open leftward into the main area, sizing
+-- to the content up to the full editor width. Auto-closes on the next cursor
+-- move, like a hover.
+local function open_details_float(lines)
+  local content_w = 0
+  for _, l in ipairs(lines) do
+    content_w = math.max(content_w, vim.fn.strdisplaywidth(l))
+  end
+
+  local panel_w = (config.jobs and config.jobs.panel and config.jobs.panel.width) or 46
+  local max_w   = math.max(20, vim.o.columns - panel_w - 4)  -- room left of the panel
+  local width   = math.max(20, math.min(content_w + 1, max_w))
+  local height  = math.min(#lines, math.max(3, vim.o.lines - 4))
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].bufhidden  = "wipe"
+
+  -- Right edge just left of the panel; clamp so a very wide float stays on-screen.
+  local col = math.max(0, vim.o.columns - panel_w - width - 2)
+  local row = math.min(math.max(vim.fn.screenrow() - 1, 1), math.max(1, vim.o.lines - height - 2))
+
+  local win = vim.api.nvim_open_win(buf, false, {
+    relative = "editor",
+    row      = row,
+    col      = col,
+    width    = width,
+    height   = height,
+    style    = "minimal",
+    border   = "rounded",
+  })
+  vim.wo[win].wrap = false
+
+  vim.api.nvim_create_autocmd({ "CursorMoved", "BufLeave", "WinLeave" }, {
+    buffer = state.bufnr,
+    once   = true,
+    callback = function()
+      if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+    end,
+  })
+  return win
+end
+
 local function setup_keymaps(bufnr)
   local km = (config.keymaps and config.keymaps.jobs) or {}
 
@@ -487,11 +533,7 @@ local function setup_keymaps(bufnr)
         table.insert(lines, "  " .. q)
       end
     end
-    vim.lsp.util.open_floating_preview(lines, "", {
-      border   = "rounded",
-      focus_id = "dblite_job_hover",
-      wrap     = false,
-    })
+    open_details_float(lines)
   end, "dblite: hover job details")
 
   map(km.relocate or "r", function()
